@@ -1,5 +1,7 @@
 # TripLedger Steward (`personal-steward-agent`)
 
+**English** | **[简体中文](README_zh.md)**
+
 **Enterprise-Grade Personal Travel, Multimodal Receipt ROI Audit & Cross-Project Expense Steward**
 
 ![Benchmark & Ablation Overview](reports/benchmark_ablation.png)

@@ -1,0 +1,11 @@
+[project]
+name = "personal-steward-agent"
+version = "0.2.0"
+description = "TripLedger Steward: Privacy-Preserving Multimodal Personal Travel, Receipt & Expense Agent"
+requires-python = ">=3.11"
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+testpaths = ["tests"]

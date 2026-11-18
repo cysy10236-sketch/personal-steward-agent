@@ -1,0 +1,12 @@
+# Virtual environment & Python bytecode
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Secrets & local runtime state (NEVER commit .env)
+.env
+logs/
+runtime_data/
+artifacts_cache/
+INTERVIEW_PLAYBOOK.md

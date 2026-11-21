@@ -10,7 +10,7 @@ from typing import Any
 
 import numpy as np
 import pymupdf as fitz
-from PIL import Image
+from PIL import Image, ImageOps
 from rapidocr_onnxruntime import RapidOCR
 
 from .artifact_registry import ArtifactRegistry, ReceiptArtifact, ReceiptROI
@@ -108,6 +108,26 @@ class ReceiptMultimodalParser:
                 if p_idx == 0:
                     w0, h0 = pw, ph
                 p_txt = page.get_text("text").strip()
+                if len(p_txt) < 20:
+                    # Scanned / image-only PDF page fallback: render at 180 DPI and run local ONNX RapidOCR
+                    pix = page.get_pixmap(dpi=180, alpha=False)
+                    pil_page = Image.frombytes("RGB", (pix.width, pix.height), pix.samples)
+                    ocr_res, _ = _get_ocr()(np.asarray(pil_page))
+                    ocr_lines = [str(it[1]).strip() for it in (ocr_res or []) if str(it[1]).strip()]
+                    if ocr_lines:
+                        p_txt = "\n".join(ocr_lines)
+                        rois.append(
+                            ReceiptROI(
+                                roi_id=f"roi_{roi_seq}",
+                                page_index=p_idx,
+                                norm_box=(0.0, 0.0, 1.0, 1.0),
+                                region_type="invoice_widget",
+                                label=f"p{p_idx + 1}_scanned_pdf_ocr",
+                                extracted_text=p_txt,
+                                line_items=_parse_ocr_line_items(ocr_lines),
+                            )
+                        )
+                        roi_seq += 1
                 page_texts.append(f"[Page {p_idx + 1}]\n{p_txt}")
 
                 tabs = page.find_tables()
@@ -210,7 +230,7 @@ class ReceiptMultimodalParser:
         if cached is not None:
             return cached
 
-        rgb = Image.open(path).convert("RGB")
+        rgb = ImageOps.exif_transpose(Image.open(path)).convert("RGB")
         w, h = rgb.size
         np_img = np.asarray(rgb)
 

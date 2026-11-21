@@ -325,12 +325,14 @@ class StewardToolRegistry:
                 out_list.append({"handle": ref, "status": "not_found"})
                 continue
             crop = self.artifact_registry.inspect_roi(art.handle, roi_id=art.rois[0].roi_id if art.rois else None)
+            ocr_body = art.raw_full_text[:2400] if art.modality == "pdf" else (crop.extracted_text or art.raw_full_text[:1000])
             out_list.append({
                 "handle": art.handle,
                 "filename": Path(art.source_path).name,
                 "modality": art.modality,
+                "pages": art.page_count,
                 "tainted": art.is_tainted_untrusted,
-                "ocr_text": crop.extracted_text or art.raw_full_text[:800],
+                "ocr_text": ocr_body,
                 "line_items": crop.line_items,
             })
         return {"status": "ok", "count": len(out_list), "receipts": out_list}

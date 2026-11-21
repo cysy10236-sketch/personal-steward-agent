@@ -1,4 +1,4 @@
-"""Shared pytest fixtures using isolated tmp_path directories and MockLLMProvider."""
+"""Shared pytest fixtures with isolated tmp_path SQLite stores and MockLLMProvider."""
 
 from __future__ import annotations
 
@@ -20,7 +20,10 @@ def isolated_settings(tmp_path: Path) -> StewardSettings:
     return StewardSettings(
         OPENAI_API_KEY="mock",
         OPENAI_BASE_URL="https://api.deepseek.com/v1",
+        LOCAL_SLM_BASE_URL="",
         MEMORY_DB_PATH=tmp_path / "mem" / "test_steward.sqlite3",
+        MCP_DB_PATH=tmp_path / "mcp" / "test_mcp.sqlite3",
+        CHECKPOINT_DB_PATH=tmp_path / "chk" / "test_chk.sqlite3",
         SANDBOX_WORKSPACE_DIR=tmp_path / "workspace",
         ARTIFACT_CACHE_DIR=tmp_path / "crops",
         TRACE_LOG_PATH=tmp_path / "logs" / "trace.jsonl",
@@ -39,14 +42,20 @@ def steward_agent(isolated_settings: StewardSettings) -> StewardAgent:
     tools = StewardToolRegistry(
         workspace_dir=isolated_settings.sandbox_workspace_dir,
         artifact_registry=reg,
+        mcp_db_path=isolated_settings.mcp_db_path,
     )
-    llm = MockLLMProvider(isolated_settings)
-    tracer = StructuredTracer(isolated_settings.trace_log_path)
-    return StewardAgent(
+    agent = StewardAgent(
         isolated_settings,
         memory=mem,
         artifact_registry=reg,
         tools=tools,
-        llm=llm,
-        tracer=tracer,
+        llm=MockLLMProvider(isolated_settings),
+        tracer=StructuredTracer(isolated_settings.trace_log_path),
     )
+    yield agent
+    tools.close()
+    agent.checkpoints.close()
+    try:
+        mem._conn.close()
+    except Exception:
+        pass

@@ -1,4 +1,4 @@
-"""Typed configuration contract with automatic live API vs. offline Mock detection."""
+"""Typed configuration contract with heterogeneous tier defaults and Fail-Closed privacy."""
 
 from __future__ import annotations
 
@@ -25,9 +25,10 @@ class StewardSettings(BaseSettings):
     local_slm_base_url: str = Field(default="", alias="LOCAL_SLM_BASE_URL")
     local_slm_api_key: str = Field(default="ollama", alias="LOCAL_SLM_API_KEY")
 
-    llm_model: str = Field(default="deepseek-flash", alias="LLM_MODEL")
+    # True heterogeneous model tiers: Frontier reasoning vs Fast SLM vs Native Vision VLM
+    llm_model: str = Field(default="deepseek-v4-pro", alias="LLM_MODEL")
     slm_model: str = Field(default="deepseek-flash", alias="SLM_MODEL")
-    local_privacy_model: str = Field(default="deepseek-flash", alias="LOCAL_PRIVACY_MODEL")
+    local_privacy_model: str = Field(default="qwen2.5:7b", alias="LOCAL_PRIVACY_MODEL")
     vlm_model: str = Field(default="deepseek-flash", alias="VLM_MODEL")
 
     temperature: float = Field(default=0.0, ge=0.0, le=2.0, alias="TEMPERATURE")
@@ -36,6 +37,13 @@ class StewardSettings(BaseSettings):
 
     memory_db_path: Path = Field(
         default=Path("runtime_data/memory/steward_memory.sqlite3"), alias="MEMORY_DB_PATH"
+    )
+    mcp_db_path: Path = Field(
+        default=Path("runtime_data/mcp/steward_mcp.sqlite3"), alias="MCP_DB_PATH"
+    )
+    checkpoint_db_path: Path = Field(
+        default=Path("runtime_data/checkpoints/steward_checkpoints.sqlite3"),
+        alias="CHECKPOINT_DB_PATH",
     )
     embedding_dim: int = Field(default=256, ge=64, le=2048, alias="EMBEDDING_DIM")
     memory_base_half_life_hours: float = Field(
@@ -53,9 +61,13 @@ class StewardSettings(BaseSettings):
     auto_reimburse_limit_cny: float = Field(
         default=1000.0, ge=0.0, alias="AUTO_REIMBURSE_LIMIT_CNY"
     )
+    approval_hmac_secret: str = Field(
+        default="steward-local-approval-hmac-key", alias="APPROVAL_HMAC_SECRET"
+    )
     agent_max_reflect_retries: int = Field(
         default=2, ge=0, le=4, alias="AGENT_MAX_REFLECT_RETRIES"
     )
+    tool_output_max_chars: int = Field(default=2400, ge=400, le=20000, alias="TOOL_OUTPUT_MAX_CHARS")
 
     trace_log_path: Path = Field(default=Path("logs/trace_events.jsonl"), alias="TRACE_LOG_PATH")
     sandbox_workspace_dir: Path = Field(
@@ -74,3 +86,7 @@ class StewardSettings(BaseSettings):
     @property
     def use_mock_llm(self) -> bool:
         return self.openai_api_key.strip().lower() in _PLACEHOLDER_KEYS
+
+    @property
+    def has_local_privacy_endpoint(self) -> bool:
+        return bool(self.local_slm_base_url.strip())

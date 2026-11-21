@@ -1,4 +1,4 @@
-"""Agent runtime: AST expense verifier, sandbox guard, MCP tool registry, and state machine."""
+"""Agent runtime: AST calculator, HMAC sandbox guard, MCP tools, CheckpointStore, and FSM."""
 
 from .sandbox import (
     ASTExpenseCalculator,
@@ -6,12 +6,14 @@ from .sandbox import (
     SandboxDecision,
     SandboxVerdict,
     WorkspaceSnapshotAuditor,
+    compute_action_fingerprint,
 )
 from .state_machine import (
     ALLOWED_TRANSITIONS,
     AgentRunResult,
     AgentState,
     AuditVerdict,
+    CheckpointStore,
     MonolithicReActBaseline,
     StewardAgent,
 )
@@ -23,6 +25,7 @@ __all__ = [
     "AgentRunResult",
     "AgentState",
     "AuditVerdict",
+    "CheckpointStore",
     "ExpenseSandboxGuard",
     "MonolithicReActBaseline",
     "SandboxDecision",
@@ -31,4 +34,5 @@ __all__ = [
     "StewardToolRegistry",
     "ToolExecutionRecord",
     "WorkspaceSnapshotAuditor",
+    "compute_action_fingerprint",
 ]

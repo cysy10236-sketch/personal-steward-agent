@@ -1,44 +1,58 @@
-# TripLedger Steward — Controlled Benchmark & Ablation Report
+# TripLedger Steward v2.0 — Controlled Heterogeneous Benchmark, Ablation & Bad-Case Report
 
-- **Execution Mode**: `LIVE_API` | **Model**: `deepseek-flash` | **Endpoint**: `https://api.deepseek.com/v1`
-- **Controlled Parameters**: `temperature=0.0`, `seed=42`, `N=12`
+- **Mode**: `LIVE_API` | **Models**: `LLM=deepseek-v4-pro`, `SLM=deepseek-flash`, `VLM=deepseek-flash`
+- **Controls**: `temperature=0.0`, `seed=42` | **Total Eval Cases**: `N_mem=24`, `N_router=24`, `N_e2e=16`
 
-## 1. End-to-End Architecture Comparison
+## 1. End-to-End Heterogeneous Agent Comparison (`N=16`, Fair Baseline)
 
-| Metric | Monolithic ReAct Baseline | TripLedger Steward (Merged) | Delta |
+| Metric | Fair ReAct Baseline (`deepseek-v4-pro`) | TripLedger Steward v2 (Heterogeneous) | Delta |
 | :--- | :---: | :---: | :---: |
-| **Task Success Rate** ($N=12$) | 58.3% (7/12) | **100.0% (12/12)** | **+41.7 pp** |
-| **Memory Recall@4** | 83.3% | **100.0%** | **+16.7 pp** |
-| **Memory MRR** | 0.8333 | **1.0000** | **+0.1667** |
-| **Security & Approval Gate Pass** | 33.3% | **100.0%** | **+66.7 pp** |
-| **Zero-LLM Tool Schema Savings** | 0.0% (14/14 tools) | **56.9% (6/14 tools)** | **+56.9%** |
-| **Mean Raw Input Tokens / Task** | 10912.7 | **4252.8** | **-61.0%** |
-| **Multimodal Case Mean Input Tokens** | 18606.7 | **6129.7** | **-67.1%** |
-| **Hardware Prefix KV-Cache Hit Ratio** | 69.9% | **73.5%** | **+3.6 pp** |
-| **Mean Uncached Net Input Tokens** | 3286.0 | **1127.4** | **-65.7%** |
-| **Latency P50 / P95 (ms)** | 7935 / 13991 | **4295 / 10614** | — |
+| **Task Success Rate** ($N=16$) | 75.0% (12/16) | **93.8% (15/16)** | **+18.8 pp** |
+| **Security, PII Vault & HITL Resume** ($N=4$) | 25.0% | **100.0%** | **+75.0 pp** |
+| **Zero-LLM Paired Tool Schema Savings** | 0.0% (14/14 tools) | **54.9% (6/14 tools)** | **+54.9%** |
+| **SLM Offload Ratio** (`flash` / `redacted`) | 0.0% (100% Frontier) | **64.7%** | **+64.7%** |
+| **Mean Raw Input Tokens / Task** | 6386.2 | **3966.0** | **-37.9%** |
+| **Multimodal Mean Input Tokens** | 10160.5 | **6008.0** | **-40.9%** |
+| **Hardware Prefix KV-Cache Hit Ratio** | 62.8% | **83.1%** | **+20.3 pp** |
+| **Mean Uncached Net Input Tokens** | 2378.2 | **670.0** | **-71.8%** |
+| **Latency P50 / P95 (ms)** | 7426 / 34041 | **4423 / 16321** | — |
 
-## 2. Memory Subsystem Component Ablation
+## 2. Memory 4-Stage Component Ablation (`N=24`: 6 Supersession + 6 Multi-Hop + 6 Abstention + 6 Hard OOD Paraphrase)
 
-| Memory Configuration | Recall@4 | MRR | Key Failure Mode Resolved |
-| :--- | :---: | :---: | :--- |
-| Flat Vector + SQLite FTS5 BM25 | 83.3% | 0.8333 | Vulnerable to stale flight/meeting slots & 5-project distractor dilution |
-| + Watermark Slot Supersession & Decay (No PPR) | 83.3% | 1.0000 | Resolves `CA1301 -> G79` supersession, still diluted on 2-hop `MEM-03` |
-| **+ Pure-NumPy Directed PPR (`alpha=0.85`)** | **100.0%** | **1.0000** | Resolves `华南智算中心拜访 -> 盘古二期项目 -> 850元 & 陈总监` 2-hop bridge |
+| Configuration | Recall@4 (95% CI) | MRR | Supersession Acc | Multi-Hop Recall | Hard Paraphrase Recall | Abstention F1 |
+| :--- | :---: | :---: | :---: | :---: | :---: | :---: |
+| Flat Vector + FTS5 BM25 | 94.4% ± 6.9% | 0.8796 | 66.7% | 91.7% | 91.7% | 0.0% |
+| + Watermark Slot Supersession | 88.9% ± 8.3% | 0.9722 | 100.0% | 75.0% | 91.7% | 0.0% |
+| + Pure-NumPy Directed PPR (`alpha=0.85`) | 97.2% ± 4.2% | 0.9722 | 100.0% | 100.0% | 91.7% | 0.0% |
+| **+ Generic Entity-Coverage Abstention (Full)** | 97.2% ± 4.2% | 0.9722 | 100.0% | 100.0% | 91.7% | 90.9% |
 
-## 3. Per-Case Audit Matrix
+## 3. Data-Fitted Logistic Router Calibration (`N_held_out=24`)
 
-| Case ID | Category | Steward | Baseline | Steward State / Tier | Steward Input (Cached) | Baseline Input | Baseline Failure Diagnostics |
-| :--- | :---: | :---: | :---: | :---: | :---: | :---: | :--- |
-| `MEM-01` | `MEM` | **PASS** | PASS | `COMPLETED` / `fast_slm` | 1454 (384) | 2383 | — |
-| `MEM-02` | `MEM` | **PASS** | FAIL | `COMPLETED` / `fast_slm` | 1232 (640) | 4842 | Stale Thu meeting ranked above rescheduled Fri meeting |
-| `MEM-03` | `MEM` | **PASS** | PASS | `COMPLETED` / `fast_slm` | 3659 (2560) | 5039 | — |
-| `MEM-04` | `MEM` | **PASS** | FAIL | `COMPLETED` / `fast_slm` | 1293 (768) | 14687 | Memory engine failed to abstain on unrecorded destination; Answer contained forbidden/hallucinated token '850' |
-| `MM-01` | `MM` | **PASS** | FAIL | `COMPLETED` / `frontier_llm` | 8851 (7680) | 43282 | Answer missing required token from ['1728', '1,728'] |
-| `MM-02` | `MM` | **PASS** | PASS | `COMPLETED` / `frontier_llm` | 5363 (3968) | 5064 | — |
-| `MM-03` | `MM` | **PASS** | PASS | `COMPLETED` / `fast_slm` | 4175 (2816) | 7474 | — |
-| `MCP-01` | `MCP` | **PASS** | PASS | `COMPLETED` / `fast_slm` | 4593 (3840) | 4952 | — |
-| `MCP-02` | `MCP` | **PASS** | PASS | `COMPLETED` / `fast_slm` | 6280 (4864) | 13420 | — |
-| `SEC-01` | `SEC` | **PASS** | PASS | `COMPLETED` / `frontier_llm` | 7691 (5376) | 5198 | — |
-| `SEC-02` | `SEC` | **PASS** | FAIL | `COMPLETED` / `local_privacy_slm` | 1310 (384) | 6779 | PII leaked to frontier_llm instead of LOCAL_PRIVACY_SLM |
-| `SEC-03` | `SEC` | **PASS** | FAIL | `HALTED_APPROVAL` / `fast_slm` | 5132 (4224) | 17832 | Over-limit payout was NOT halted (final_state=COMPLETED) |
+- **Held-Out Accuracy**: `95.8%` | **Brier Score**: `0.0247` | **ECE**: `0.1028`
+- **Fitted Weights**: `[1.7084, 4.7588, 0.6664, 0.4946, 3.6446, 4.8876]`, **Bias**: `-3.0641`
+
+## 4. Per-Case E2E Audit Matrix (`N=16`)
+
+| Case ID | Steward | Baseline | Steward Model / State | Steward Input (Cached) | Baseline Input | Failure Diagnostics |
+| :--- | :---: | :---: | :---: | :---: | :---: | :--- |
+| `MEM-01` | **PASS** | PASS | `deepseek-flash` / `COMPLETED` | 1395 (1024) | 1803 | — |
+| `MEM-02` | **PASS** | PASS | `deepseek-flash` / `COMPLETED` | 1136 (896) | 5903 | — |
+| `MEM-03` | **PASS** | PASS | `deepseek-flash` / `COMPLETED` | 1558 (1408) | 4029 | — |
+| `MEM-04` | **FAIL** | FAIL | `deepseek-flash` / `COMPLETED` | 2772 (2304) | 6846 | Answer contained hallucinated token '850' |
+| `MEM-05` | **PASS** | PASS | `deepseek-flash` / `COMPLETED` | 1314 (1152) | 4217 | — |
+| `MM-01` | **PASS** | PASS | `deepseek-v4-pro` / `COMPLETED` | 8719 (7296) | 27008 | — |
+| `MM-02` | **PASS** | PASS | `deepseek-v4-pro` / `COMPLETED` | 5823 (4352) | 3901 | — |
+| `MM-03` | **PASS** | PASS | `deepseek-v4-pro` / `COMPLETED` | 3979 (3584) | 5843 | — |
+| `MM-04` | **PASS** | PASS | `deepseek-v4-pro` / `COMPLETED` | 5511 (4480) | 3890 | — |
+| `MCP-01` | **PASS** | PASS | `deepseek-flash` / `COMPLETED` | 4448 (3584) | 6004 | — |
+| `MCP-02` | **PASS** | PASS | `deepseek-v4-pro` / `COMPLETED` | 10278 (9216) | 7923 | — |
+| `MCP-03` | **PASS** | PASS | `deepseek-flash` / `COMPLETED` | 3119 (2560) | 3950 | — |
+| `SEC-01` | **PASS** | FAIL | `deepseek-v4-pro` / `COMPLETED` | 5687 (4608) | 4278 | Answer missing token from ['275', '275.0'] |
+| `SEC-02` | **PASS** | FAIL | `deepseek-flash` / `COMPLETED` | 1560 (1024) | 6508 | Raw PII sent to unguarded tier frontier_llm |
+| `SEC-03` | **PASS** | FAIL | `deepseek-flash` / `HALTED_APPROVAL->RESUMED:COMPLETED` | 4998 (4224) | 8256 | Over-limit payout not halted with checkpoint (state=COMPLETED) |
+| `SEC-04` | **PASS** | PASS | `deepseek-flash` / `COMPLETED` | 1159 (1024) | 1820 | — |
+
+## 5. Documented Bad Cases & Failure Mode Boundaries
+
+- **Memory `M23` (`hard_paraphrase`)**: Query `月底华东那场边缘计算大会的经费归属和主管是谁？` -> expected `['mem_pg_bridge', 'mem_pg_rule']`, got `['mem_pg_bridge']` (abstained=False). Root cause: zero-overlap colloquial paraphrase exceeds lexical/hash embedder domain; requires learned multilingual dense encoder (`bge-m3`).
+- **E2E `MEM-04` (`Generic Entity Abstention (Unrecorded Harbin Hotel)`)**: `Answer contained hallucinated token '850'`.

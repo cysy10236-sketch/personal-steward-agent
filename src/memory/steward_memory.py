@@ -21,6 +21,7 @@ from .tokenizer_embedder import (
     DeterministicBilingualEmbedder,
     build_fts5_or_query,
     extract_bilingual_entities,
+    extract_query_anchors,
     fts5_segment_text,
     infer_travel_slot,
 )
@@ -88,6 +89,7 @@ class StewardMemoryEngine:
         weights: tuple[float, float, float] = (0.42, 0.23, 0.35),
         enable_graph_ppr: bool = True,
         enable_supersession_and_decay: bool = True,
+        enable_abstention_gate: bool = True,
     ) -> None:
         if abs(sum(weights) - 1.0) > 1e-5:
             raise ValueError(f"Channel weights must sum to 1.0, got {weights}")
@@ -100,6 +102,7 @@ class StewardMemoryEngine:
         self.w_vec, self.w_lex, self.w_ppr = weights
         self.enable_graph_ppr = enable_graph_ppr
         self.enable_supersession_and_decay = enable_supersession_and_decay
+        self.enable_abstention_gate = enable_abstention_gate
 
         self._conn = sqlite3.connect(str(self.db_path), check_same_thread=False)
         self._conn.row_factory = sqlite3.Row
@@ -549,7 +552,7 @@ class StewardMemoryEngine:
         max_ppr = max(raw_mem_ppr.values(), default=0.0)
 
         w_v, w_l, w_g = self.w_vec, self.w_lex, self.w_ppr
-        if not self.enable_graph_ppr:
+        if not self.enable_graph_ppr or max_ppr <= 1e-9:
             denom = w_v + w_l
             w_v, w_l, w_g = w_v / denom, w_l / denom, 0.0
 
@@ -584,28 +587,33 @@ class StewardMemoryEngine:
         candidates.sort(key=lambda h: h.final_score, reverse=True)
 
         # Calibrated Abstention Gate: reject unrelated queries (e.g., unrecorded city/hotel)
-        if not candidates or candidates[0].final_score < self.abstention_threshold:
-            return MemorySearchResult(
-                hits=[],
-                abstained=True,
-                superseded_filtered_count=superseded_skipped,
-            )
-
-        # Location-mismatch abstention guard for specific unrecorded travel destinations
-        queried_cities = set(re.findall(r"(北京|上海|深圳|广州|杭州|成都|东京|新加坡|威斯汀)", query))
-        if queried_cities and self.enable_supersession_and_decay:
-            has_city_evidence = any(
-                any(city in h.record.content for city in queried_cities)
-                for h in candidates[:top_k]
-            )
-            if not has_city_evidence and candidates[0].graph_ppr_score == 0.0:
+        if self.enable_abstention_gate:
+            if not candidates or candidates[0].final_score < self.abstention_threshold:
                 return MemorySearchResult(
                     hits=[],
                     abstained=True,
                     superseded_filtered_count=superseded_skipped,
                 )
 
-        filtered = [h for h in candidates[:top_k] if h.final_score >= self.abstention_threshold * 0.75]
+            # Generic Entity-Coverage Abstention Gate (zero hardcoded city/brand names)
+            anchors = extract_query_anchors(query)
+            if anchors and self.enable_supersession_and_decay:
+                top_corpus = " ".join(h.record.content.lower() for h in candidates[:top_k])
+                grounded = any(
+                    (a.lower() in top_corpus)
+                    or (len(a) >= 4 and a[:2].lower() in top_corpus and a[-2:].lower() in top_corpus)
+                    for a in anchors
+                )
+                if not grounded and candidates[0].graph_ppr_score == 0.0 and candidates[0].vector_score < 0.55:
+                    return MemorySearchResult(
+                        hits=[],
+                        abstained=True,
+                        superseded_filtered_count=superseded_skipped,
+                    )
+
+            filtered = [h for h in candidates[:top_k] if h.final_score >= self.abstention_threshold * 0.75]
+        else:
+            filtered = candidates[:top_k]
         return MemorySearchResult(
             hits=filtered,
             abstained=(len(filtered) == 0),

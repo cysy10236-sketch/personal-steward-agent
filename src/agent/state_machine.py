@@ -211,8 +211,10 @@ class StewardAgent:
 
     @staticmethod
     def _expects_file_export(query: str) -> bool:
-        has_verb = any(w in query for w in ("导出", "写入", "保存", "生成", "export", "save"))
-        has_noun = bool(re.search(r"\.(md|json)\b", query, re.I)) or any(n in query for n in ("报销单文件", "核验单文件", "凭证文件"))
+        has_verb = any(w in query for w in ("导出", "写入", "保存", "生成", "制作", "export", "save"))
+        has_noun = bool(re.search(r"\.(md|json|docx)\b", query, re.I)) or any(
+            n in query.lower() for n in ("word", "docx", "报销单", "核验单", "凭证文件", "报销文档")
+        )
         return has_verb and has_noun
 
     async def _run_plan_loop(
@@ -291,7 +293,8 @@ class StewardAgent:
             self._step_state(state_path, AgentState.PLAN)
 
         final_answer = ""
-        for _step in range(6):
+        max_steps = max(6, 4 + len(artifacts))
+        for _step in range(max_steps):
             with self.tracer.span(trace_id, "llm", "complete") as sp:
                 comp = await self.llm.complete(messages, model_id=routing_dec.model_id, tier=routing_dec.tier, tools=active_specs)
                 sp.model_id, sp.input_tokens, sp.output_tokens, sp.cached_input_tokens = (
@@ -431,11 +434,12 @@ class StewardAgent:
                     totals[0] += v_in
                     totals[1] += v_out
                     all_exec.append(rec)
+                    limit_chars = self.settings.tool_output_max_chars * 3 if tc.tool_name == "inspect_all_receipts" else self.settings.tool_output_max_chars
                     messages.append({
                         "role": "tool",
                         "tool_call_id": tc.call_id,
                         "name": tc.tool_name,
-                        "content": _compact_tool_output(rec.output_json, self.settings.tool_output_max_chars),
+                        "content": _compact_tool_output(rec.output_json, limit_chars),
                     })
                 self._step_state(state_path, AgentState.PLAN)
             else:
@@ -530,10 +534,10 @@ class StewardAgent:
             unresolved = [f"{r.tool_name}: {r.output_json}" for r in all_exec if r.status == "error" and r.tool_name not in succeeded]
             if unresolved:
                 issues.append("Unresolved tool errors: " + "; ".join(unresolved))
-            if artifacts and "inspect_receipt_roi" not in succeeded:
-                issues.append("Attachment present but inspect_receipt_roi was not invoked.")
+            if artifacts and not ({"inspect_receipt_roi", "inspect_all_receipts"} & succeeded):
+                issues.append("Attachment present but neither inspect_receipt_roi nor inspect_all_receipts was invoked.")
             if self._expects_file_export(user_query) and not changed_files:
-                issues.append("File export requested but workspace SHA-256 shows zero changed files.")
+                issues.append("File export requested (.docx/.md/.json) but workspace SHA-256 shows zero changed files.")
             if not final_answer.strip():
                 issues.append("Empty final response.")
 
@@ -543,7 +547,7 @@ class StewardAgent:
 
             if attempt < self.settings.agent_max_reflect_retries:
                 auditor_feedback = " | ".join(issues)
-                for extra in ("export_claim_markdown", "inspect_receipt_roi"):
+                for extra in ("export_reimbursement_docx", "export_claim_markdown", "inspect_all_receipts", "inspect_receipt_roi"):
                     if extra not in {s.name for s in active_specs}:
                         active_specs.extend(self.tools.specs_by_names([extra]))
             elif not final_answer.strip():

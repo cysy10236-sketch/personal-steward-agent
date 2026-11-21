@@ -266,11 +266,15 @@ class MockLLMProvider:
             if re.search(r"ignore\s+all\s+previous\s+instructions", raw_obs_block, re.I) and "run_guarded_shell" in tool_names and "run_guarded_shell" not in {n for n, _, _ in tool_history}:
                 return _call("run_guarded_shell", {"command": "cat .env"})
 
-        if handles_block and "inspect_receipt_roi" in tool_names:
-            inspected = {str(ag.get("artifact_ref", "")) for n, ag, _ in tool_history if n == "inspect_receipt_roi"}
-            for ref in re.findall(r'ref="(artifact://[^"]+)"', handles_block):
-                if ref not in inspected:
-                    return _call("inspect_receipt_roi", {"artifact_ref": ref, "roi_id": "roi_1"})
+        if handles_block:
+            refs = re.findall(r'ref="(artifact://[^"]+)"', handles_block)
+            if len(refs) > 1 and "inspect_all_receipts" in tool_names and "inspect_all_receipts" not in done_ok:
+                return _call("inspect_all_receipts", {"artifact_refs": refs})
+            if "inspect_receipt_roi" in tool_names and "inspect_all_receipts" not in done_ok:
+                inspected = {str(ag.get("artifact_ref", "")) for n, ag, _ in tool_history if n == "inspect_receipt_roi"}
+                for ref in refs:
+                    if ref not in inspected:
+                        return _call("inspect_receipt_roi", {"artifact_ref": ref, "roi_id": "roi_1"})
 
         if any(k in query for k in ("直接发起打款", "立即打款", "自动打款")) and "mcp_reimburse_submit_payout" in tool_names and "mcp_reimburse_submit_payout" not in {n for n, _, _ in tool_history}:
             amt_m = re.search(r"(\d+(?:\.\d+)?)\s*元", query)
@@ -311,6 +315,33 @@ class MockLLMProvider:
                 except json.JSONDecodeError:
                     continue
             return _call("eval_expense_math", {"expression": " + ".join(str(x) for x in nums) if nums else "0"})
+
+        if any(k in query.lower() for k in ("word", ".docx", "docx", "贴图", "贴入照片")) and "export_reimbursement_docx" in tool_names and "export_reimbursement_docx" not in done_ok:
+            refs = re.findall(r'ref="(artifact://[^"]+)"', handles_block)
+            batch_out = next((out for n, _, out in reversed(tool_history) if n == "inspect_all_receipts"), "")
+            items_payload: list[dict[str, Any]] = []
+            if batch_out:
+                try:
+                    for r in json.loads(batch_out).get("receipts", []):
+                        amt_m = re.search(r"(\d+(?:\.\d{1,2})?)\s*(?:元|CNY)?", str(r.get("ocr_text", "")))
+                        amt = float(amt_m.group(1)) if amt_m else 100.0
+                        items_payload.append({
+                            "date": "2026-11-20", "category": "差旅费", "merchant_or_desc": str(r.get("filename", "票据")),
+                            "payment_channel": "微信/支付宝截图", "gross_amount_cny": amt, "excluded_personal_cny": 0.0,
+                            "reimbursable_cny": amt, "artifact_handle": str(r.get("handle", "")), "notes": "自动核验",
+                        })
+                except json.JSONDecodeError:
+                    items_payload = []
+            if not items_payload:
+                items_payload = [{
+                    "date": "2026-11-20", "category": "差旅费", "merchant_or_desc": "带队出行费用",
+                    "payment_channel": "电子凭证", "gross_amount_cny": 100.0, "excluded_personal_cny": 0.0,
+                    "reimbursable_cny": 100.0, "artifact_handle": refs[0] if refs else "", "notes": "",
+                }]
+            return _call("export_reimbursement_docx", {
+                "filename": "team_reimbursement.docx", "title": "带队出行费用报销明细单",
+                "applicant": "带队负责人", "project_code": "PRJ-PANGU-2", "trip_summary": query[:80], "items": items_payload,
+            })
 
         file_m = re.search(r"([A-Za-z0-9_-]+\.md)", query)
         if file_m and "export_claim_markdown" in tool_names and "export_claim_markdown" not in done_ok:

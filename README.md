@@ -1,14 +1,16 @@
-# TripLedger Steward (`personal-steward-agent` v2.0)
+# TripLedger Steward (`personal-steward-agent` v2.1)
 
 **English** | **[简体中文](README_zh.md)**
 
-**Production-Hardened Personal Travel, Pure-Pixel Multimodal Receipt Audit & Cross-Project Expense Steward**
+**Production-Hardened Personal Travel, Multi-Receipt Word (`.docx`) Reimbursement Studio & Cross-Project Expense Agent**
+
+![TripLedger Steward Minimalist Web Studio](reports/web_studio_demo.png)
 
 ![Benchmark & Ablation Overview](reports/benchmark_ablation.png)
 
-## 1. Architecture & Engineering Highlights (v2.0)
+## 1. Architecture & Engineering Highlights (v2.1)
 
-TripLedger Steward anchors Personal Agent research in a high-frequency, low-tolerance vertical: reconciling rescheduled trips (`CA1301 -> G79`), 2-hop cross-project lodging caps (`Client Visit -> Project -> Approver & Cost Center`), multi-page PDF hotel folios & pure-pixel receipt screenshots, sensitive PII verification, and human-approved reimbursement payouts.
+TripLedger Steward anchors Personal Agent research in a high-frequency, low-tolerance vertical: batch-auditing multi-channel payment screenshots & paper receipts (`WeChat Pay`, `Alipay`, thermal receipts, multi-page hotel PDF folios) into print-ready Word (`.docx`) reimbursement reports with embedded original photos and duplicate-claim alerts, while reconciling rescheduled trips (`CA1301 -> G79`), 2-hop cross-project lodging caps, Fail-Closed PII redaction, and human-approved payouts.
 
 ```mermaid
 flowchart TD
@@ -37,7 +39,8 @@ flowchart TD
 | **Pure-Pixel OCR + Native VLM ROI** | `src/perception/receipt_parser.py`<br>`src/perception/artifact_registry.py` | PDF tables extracted via `PyMuPDF` `page.get_text("text", clip=cbox)` with date-column filtering; raw PNG receipts parsed from pixels via ONNX `RapidOCR` (zero PNG metadata shortcuts) and visually cross-verified on cropped `base64_png` via native VLM (`deepseek-flash`). |
 | **Hybrid Personal Memory Engine** | `src/memory/steward_memory.py`<br>`src/memory/tokenizer_embedder.py` | SQLite WAL + `FTS5` BM25 + 256-D bilingual embeddings + pure-NumPy power-iteration Directed PPR ($\alpha=0.85$, dangling-node mass conservation) + Watermark Slot Supersession + domain-agnostic Entity-Coverage Abstention Gate (zero hardcoded cities/brands). |
 | **Fail-Closed PII Vault & Fitted Router** | `src/router/steward_router.py` | Locally computes GB 11643 ID & Luhn card checksums and strips raw PII (`<PII_CN_ID_1>`) before cloud calls when no `LOCAL_SLM_BASE_URL` is set; 6-D logistic weights fitted via NumPy gradient descent (`Held-Out Acc=95.8%`, `Brier=0.0247`, `ECE=0.1028`); paired MCP pruning (`14 -> 6`); byte-constant Prefix KV-Cache. |
-| **FSM, Checkpoint Resume & Hardened Sandbox** | `src/agent/state_machine.py`<br>`src/agent/sandbox.py`<br>`src/agent/tools.py` | 13-state `ALLOWED_TRANSITIONS` FSM; SQLite `CheckpointStore` enabling true `HALTED_APPROVAL -> resume(checkpoint_id, approval_token)` with HMAC-SHA256 parameter binding; `ASTExpenseCalculator` (no `eval()`); `shell=False` allowlisted diagnostics; duplicate-call loop breaker & tool output compaction. |
+| **Batch Word (`.docx`) Export & Web Studio** | `src/perception/docx_exporter.py`<br>`src/web/index.html`<br>`main.py` | Parallel `inspect_all_receipts` (ONNX `RapidOCR` + `deepseek-flash` VLM), same-day/same-amount duplicate claim detection, AST-verified `.docx` summary table + EXIF-corrected embedded receipt photos, and a zero-dependency Apple/Google minimalist Web UI (`http://127.0.0.1:8088`) with 1-click sample pack and inline HITL Checkpoint resume. |
+| **FSM, Checkpoint Resume & Hardened Sandbox** | `src/agent/state_machine.py`<br>`src/agent/sandbox.py`<br>`src/agent/tools.py` | 13-state `ALLOWED_TRANSITIONS` FSM; 16 registered tools (7 local + 9 `stdio` MCP); SQLite `CheckpointStore` enabling true `HALTED_APPROVAL -> resume(checkpoint_id, approval_token)` with HMAC-SHA256 parameter binding; `ASTExpenseCalculator` (no `eval()`); `shell=False` allowlisted diagnostics; duplicate-call loop breaker & output compaction. |
 
 ---
 
@@ -90,6 +93,6 @@ Copy-Item .env.example .env
 # 3. Full N_mem=24 + N_router=24 + N_e2e=16 benchmark & 200-DPI ablation chart
 .\.venv\Scripts\python -m src.eval.run_benchmark
 
-# 4. Start FastAPI server (POST /v1/steward/run and POST /v1/steward/resume)
+# 4. Launch Minimalist Web Studio & FastAPI server -> open http://127.0.0.1:8088
 .\.venv\Scripts\python main.py --serve --port 8088
 ```

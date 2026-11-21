@@ -1,0 +1,1038 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>TripLedger Steward — 智能差旅报销工坊</title>
+  <style>
+    :root {
+      --bg: #f5f5f7;
+      --surface: #ffffff;
+      --surface-subtle: #fafafa;
+      --text: #1d1d1f;
+      --text-secondary: #6e6e73;
+      --text-tertiary: #86868b;
+      --accent: #0071e3;
+      --accent-hover: #0077ed;
+      --accent-soft: rgba(0, 113, 227, 0.08);
+      --border: rgba(0, 0, 0, 0.08);
+      --border-strong: rgba(0, 0, 0, 0.14);
+      --green: #15803d;
+      --green-bg: #f0fdf4;
+      --amber: #b45309;
+      --amber-bg: #fffbeb;
+      --red: #b91c1c;
+      --red-bg: #fef2f2;
+      --radius-lg: 20px;
+      --radius-md: 14px;
+      --radius-sm: 10px;
+      --shadow-card: 0 2px 10px rgba(0, 0, 0, 0.025), 0 12px 32px rgba(0, 0, 0, 0.035);
+      --font: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "PingFang SC", "Microsoft YaHei", "Segoe UI", sans-serif;
+      --mono: "SF Mono", "Cascadia Code", Consolas, monospace;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: var(--font);
+      background: var(--bg);
+      color: var(--text);
+      -webkit-font-smoothing: antialiased;
+      line-height: 1.55;
+      min-height: 100vh;
+    }
+
+    /* Sticky Glassmorphic Nav (Apple HIG) */
+    .topbar {
+      position: sticky;
+      top: 0;
+      z-index: 40;
+      height: 58px;
+      background: rgba(255, 255, 255, 0.78);
+      backdrop-filter: saturate(180%) blur(20px);
+      -webkit-backdrop-filter: saturate(180%) blur(20px);
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 32px;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-weight: 600;
+      font-size: 16px;
+      letter-spacing: -0.02em;
+    }
+
+    .brand-mark {
+      width: 28px;
+      height: 28px;
+      border-radius: 8px;
+      background: linear-gradient(145deg, #1d1d1f 0%, #3a3a40 100%);
+      display: grid;
+      place-items: center;
+      color: #fff;
+      font-size: 13px;
+      font-weight: 700;
+      box-shadow: 0 2px 6px rgba(0, 0, 0, 0.14);
+    }
+
+    .status-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 13px;
+      border-radius: 999px;
+      background: rgba(0, 0, 0, 0.04);
+      font-size: 12px;
+      color: var(--text-secondary);
+      font-weight: 500;
+    }
+
+    .status-dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: #22c55e;
+      box-shadow: 0 0 0 3px rgba(34, 197, 94, 0.18);
+    }
+
+    /* Main Container */
+    .shell {
+      max-width: 1280px;
+      margin: 0 auto;
+      padding: 28px 28px 56px;
+    }
+
+    .hero {
+      margin-bottom: 24px;
+      display: flex;
+      align-items: flex-end;
+      justify-content: space-between;
+      gap: 20px;
+      flex-wrap: wrap;
+    }
+
+    .hero h1 {
+      font-size: 30px;
+      font-weight: 650;
+      letter-spacing: -0.03em;
+      color: var(--text);
+      margin-bottom: 4px;
+    }
+
+    .hero p {
+      font-size: 14.5px;
+      color: var(--text-secondary);
+      max-width: 680px;
+    }
+
+    .sample-btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      padding: 9px 16px;
+      border-radius: 999px;
+      border: 1px solid var(--border-strong);
+      background: var(--surface);
+      color: var(--text);
+      font-size: 13px;
+      font-weight: 500;
+      cursor: pointer;
+      transition: all 0.18s ease;
+    }
+
+    .sample-btn:hover {
+      background: #f0f0f3;
+      border-color: rgba(0, 0, 0, 0.22);
+      transform: translateY(-1px);
+    }
+
+    /* Split Workspace Grid */
+    .workspace {
+      display: grid;
+      grid-template-columns: 430px minmax(0, 1fr);
+      gap: 24px;
+      align-items: start;
+    }
+
+    @media (max-width: 960px) {
+      .workspace { grid-template-columns: 1fr; }
+    }
+
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      box-shadow: var(--shadow-card);
+      padding: 24px;
+    }
+
+    .section-label {
+      font-size: 12px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      color: var(--text-tertiary);
+      margin-bottom: 12px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    /* Dropzone */
+    .dropzone {
+      border: 1.5px dashed rgba(0, 0, 0, 0.16);
+      border-radius: var(--radius-md);
+      background: var(--surface-subtle);
+      padding: 26px 18px;
+      text-align: center;
+      cursor: pointer;
+      transition: all 0.2s ease;
+      margin-bottom: 14px;
+    }
+
+    .dropzone:hover, .dropzone.dragover {
+      border-color: var(--accent);
+      background: var(--accent-soft);
+    }
+
+    .dropzone-icon {
+      width: 40px;
+      height: 40px;
+      margin: 0 auto 10px;
+      border-radius: 12px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      display: grid;
+      place-items: center;
+      color: var(--accent);
+    }
+
+    .dropzone-title {
+      font-size: 14px;
+      font-weight: 600;
+      color: var(--text);
+      margin-bottom: 3px;
+    }
+
+    .dropzone-sub {
+      font-size: 12.5px;
+      color: var(--text-secondary);
+    }
+
+    /* Thumbnails */
+    .thumb-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 10px;
+      margin-bottom: 18px;
+    }
+
+    .thumb-card {
+      position: relative;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      overflow: hidden;
+      background: var(--surface-subtle);
+      display: flex;
+      flex-direction: column;
+    }
+
+    .thumb-img {
+      width: 100%;
+      height: 98px;
+      object-fit: cover;
+      object-position: top;
+      background: #eef2f6;
+      display: block;
+    }
+
+    .thumb-pdf {
+      height: 98px;
+      display: grid;
+      place-items: center;
+      font-size: 12px;
+      font-weight: 600;
+      color: #dc2626;
+      background: #fef2f2;
+    }
+
+    .thumb-meta {
+      padding: 6px 8px;
+      font-size: 11.5px;
+      color: var(--text);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      border-top: 1px solid var(--border);
+    }
+
+    .thumb-del {
+      position: absolute;
+      top: 5px;
+      right: 5px;
+      width: 20px;
+      height: 20px;
+      border-radius: 50%;
+      border: none;
+      background: rgba(29, 29, 31, 0.72);
+      color: #fff;
+      font-size: 12px;
+      line-height: 20px;
+      cursor: pointer;
+      display: grid;
+      place-items: center;
+    }
+
+    /* Inputs */
+    .field { margin-bottom: 14px; }
+    .field label {
+      display: block;
+      font-size: 12.5px;
+      font-weight: 500;
+      color: var(--text-secondary);
+      margin-bottom: 6px;
+    }
+
+    .field input, .field textarea {
+      width: 100%;
+      border: 1px solid var(--border-strong);
+      border-radius: var(--radius-sm);
+      padding: 10px 12px;
+      font-family: var(--font);
+      font-size: 13.5px;
+      color: var(--text);
+      background: var(--surface);
+      outline: none;
+      transition: border-color 0.15s, box-shadow 0.15s;
+    }
+
+    .field input:focus, .field textarea:focus {
+      border-color: var(--accent);
+      box-shadow: 0 0 0 3px rgba(0, 113, 227, 0.14);
+    }
+
+    .field textarea { resize: vertical; min-height: 76px; }
+
+    .row-2 {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+    }
+
+    /* iOS Toggle */
+    .toggle-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 11px 13px;
+      border-radius: var(--radius-sm);
+      background: var(--surface-subtle);
+      border: 1px solid var(--border);
+      margin-bottom: 18px;
+    }
+
+    .toggle-row span { font-size: 13px; font-weight: 500; color: var(--text); }
+    .toggle-row small { display: block; font-size: 11.5px; color: var(--text-secondary); }
+
+    .switch {
+      position: relative;
+      width: 42px;
+      height: 24px;
+      flex-shrink: 0;
+    }
+    .switch input { opacity: 0; width: 0; height: 0; }
+    .slider {
+      position: absolute;
+      inset: 0;
+      background: #d2d2d7;
+      border-radius: 999px;
+      cursor: pointer;
+      transition: 0.2s;
+    }
+    .slider::before {
+      content: "";
+      position: absolute;
+      height: 20px;
+      width: 20px;
+      left: 2px;
+      bottom: 2px;
+      background: #fff;
+      border-radius: 50%;
+      transition: 0.2s;
+      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+    }
+    .switch input:checked + .slider { background: #34c759; }
+    .switch input:checked + .slider::before { transform: translateX(18px); }
+
+    /* Primary Button */
+    .btn-primary {
+      width: 100%;
+      padding: 12px 20px;
+      border: none;
+      border-radius: 999px;
+      background: var(--accent);
+      color: #fff;
+      font-family: var(--font);
+      font-size: 14.5px;
+      font-weight: 600;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      transition: all 0.18s ease;
+    }
+    .btn-primary:hover:not(:disabled) { background: var(--accent-hover); transform: translateY(-1px); }
+    .btn-primary:disabled { opacity: 0.55; cursor: not-allowed; }
+
+    /* Right Output Canvas */
+    .pipeline {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      margin-bottom: 20px;
+    }
+
+    .stage-pill {
+      font-size: 12px;
+      padding: 5px 12px;
+      border-radius: 999px;
+      background: var(--surface-subtle);
+      border: 1px solid var(--border);
+      color: var(--text-tertiary);
+      font-weight: 500;
+      transition: all 0.25s;
+    }
+
+    .stage-pill.active {
+      background: var(--accent-soft);
+      border-color: rgba(0, 113, 227, 0.3);
+      color: var(--accent);
+    }
+
+    .stage-pill.done {
+      background: var(--green-bg);
+      border-color: rgba(21, 128, 61, 0.25);
+      color: var(--green);
+    }
+
+    /* Empty State */
+    .empty-state {
+      padding: 36px 20px;
+      text-align: center;
+    }
+
+    .empty-state h2 {
+      font-size: 20px;
+      font-weight: 600;
+      letter-spacing: -0.02em;
+      margin-bottom: 8px;
+    }
+
+    .empty-state p {
+      font-size: 14px;
+      color: var(--text-secondary);
+      max-width: 480px;
+      margin: 0 auto 28px;
+    }
+
+    .feature-steps {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 14px;
+      text-align: left;
+    }
+
+    @media (max-width: 720px) {
+      .feature-steps { grid-template-columns: 1fr; }
+    }
+
+    .f-step {
+      padding: 16px;
+      border-radius: var(--radius-md);
+      background: var(--surface-subtle);
+      border: 1px solid var(--border);
+    }
+
+    .f-num {
+      font-family: var(--mono);
+      font-size: 11px;
+      font-weight: 700;
+      color: var(--accent);
+      margin-bottom: 6px;
+    }
+
+    .f-step h3 { font-size: 13.5px; font-weight: 600; margin-bottom: 4px; }
+    .f-step p { font-size: 12.5px; color: var(--text-secondary); margin: 0; }
+
+    /* KPI Bento Grid */
+    .kpi-grid {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 12px;
+      margin-bottom: 18px;
+    }
+
+    @media (max-width: 720px) {
+      .kpi-grid { grid-template-columns: repeat(2, 1fr); }
+    }
+
+    .kpi {
+      padding: 14px 16px;
+      border-radius: var(--radius-md);
+      background: var(--surface-subtle);
+      border: 1px solid var(--border);
+    }
+
+    .kpi-label { font-size: 11.5px; color: var(--text-tertiary); font-weight: 500; margin-bottom: 4px; }
+    .kpi-val { font-size: 19px; font-weight: 650; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; }
+    .kpi-val.accent { color: var(--accent); }
+    .kpi-sub { font-size: 11px; color: var(--text-secondary); margin-top: 2px; }
+
+    /* Download Bar */
+    .download-bar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 14px;
+      flex-wrap: wrap;
+      padding: 16px 18px;
+      border-radius: var(--radius-md);
+      background: linear-gradient(135deg, #f0f7ff 0%, #f8fafc 100%);
+      border: 1px solid rgba(0, 113, 227, 0.2);
+      margin-bottom: 18px;
+    }
+
+    .dl-info { flex: 1; min-width: 220px; }
+    .dl-info strong { font-size: 14.5px; color: var(--text); display: block; }
+    .dl-info span { font-size: 12.5px; color: var(--text-secondary); }
+
+    .dl-actions { display: flex; gap: 10px; flex-wrap: wrap; flex-shrink: 0; }
+
+    .btn-download {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 9px 18px;
+      border-radius: 999px;
+      background: var(--text);
+      color: #fff;
+      text-decoration: none;
+      font-size: 13px;
+      font-weight: 600;
+      transition: opacity 0.15s;
+    }
+    .btn-download:hover { opacity: 0.86; }
+
+    /* Alert & HITL Cards */
+    .alert {
+      padding: 14px 16px;
+      border-radius: var(--radius-md);
+      margin-bottom: 16px;
+      font-size: 13px;
+    }
+    .alert.warn { background: var(--amber-bg); border: 1px solid rgba(245, 158, 11, 0.35); color: #92400e; }
+    .alert.ok { background: var(--green-bg); border: 1px solid rgba(34, 197, 94, 0.3); color: #166534; }
+    .alert.halt { background: #fff7ed; border: 1px solid rgba(234, 88, 12, 0.35); color: #9a3412; }
+
+    .btn-approve {
+      margin-top: 10px;
+      padding: 8px 16px;
+      border: none;
+      border-radius: 999px;
+      background: #ea580c;
+      color: #fff;
+      font-size: 12.5px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+
+    /* Report Prose & Table */
+    .report-box {
+      padding: 20px 22px;
+      border-radius: var(--radius-md);
+      border: 1px solid var(--border);
+      background: var(--surface);
+      font-size: 13.5px;
+      line-height: 1.7;
+      word-break: break-word;
+      color: var(--text);
+      margin-bottom: 14px;
+      overflow-x: auto;
+    }
+    .report-box h2, .report-box h3 { font-size: 14.5px; font-weight: 650; margin: 14px 0 8px; letter-spacing: -0.01em; color: var(--text); }
+    .report-box h2:first-child, .report-box h3:first-child { margin-top: 0; }
+    .report-box p { margin: 0 0 8px; }
+    .report-box ul { margin: 6px 0 10px 18px; }
+    .report-box li { margin-bottom: 4px; }
+    .report-box code { font-family: var(--mono); font-size: 12px; background: var(--surface-subtle); border: 1px solid var(--border); padding: 1px 5px; border-radius: 5px; }
+    .report-table { width: 100%; border-collapse: collapse; margin: 10px 0 14px; font-size: 12.5px; }
+    .report-table th { text-align: left; padding: 8px 10px; background: var(--surface-subtle); border-bottom: 1px solid var(--border-strong); color: var(--text-secondary); font-weight: 600; white-space: nowrap; }
+    .report-table td { padding: 8px 10px; border-bottom: 1px solid var(--border); vertical-align: top; }
+    .report-table tr:last-child td { border-bottom: none; }
+
+    details.trace-details {
+      border: 1px solid var(--border);
+      border-radius: var(--radius-md);
+      padding: 12px 16px;
+      background: var(--surface-subtle);
+      font-size: 12.5px;
+    }
+
+    details.trace-details summary {
+      cursor: pointer;
+      font-weight: 600;
+      color: var(--text-secondary);
+      user-select: none;
+    }
+
+    .trace-list {
+      margin-top: 10px;
+      font-family: var(--mono);
+      font-size: 11.5px;
+      color: var(--text-secondary);
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .spinner {
+      width: 15px;
+      height: 15px;
+      border: 2px solid rgba(255, 255, 255, 0.35);
+      border-top-color: #fff;
+      border-radius: 50%;
+      animation: spin 0.7s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .hidden { display: none !important; }
+  </style>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <div class="brand-mark">TL</div>
+      <span>TripLedger Steward</span>
+    </div>
+    <div class="status-pill" id="sysStatus">
+      <span class="status-dot"></span>
+      <span>正在连接运行时...</span>
+    </div>
+  </header>
+
+  <main class="shell">
+    <section class="hero">
+      <div>
+        <h1>带队出行与差旅报销工坊</h1>
+        <p>上传微信支付截图、支付宝账单、餐饮/打车小票或酒店 PDF 水单。系统自动完成像素级 OCR 与 VLM 核验、重复票据预警、AST 算术汇总，一键排版导出带清晰原图的 Word 报销文档。</p>
+      </div>
+      <button class="sample-btn" id="btnLoadSamples" type="button">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="3"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg>
+        一键加载带队示例票据（微信+支付宝+小票）
+      </button>
+    </section>
+
+    <section class="workspace">
+      <!-- Left: Upload & Configuration -->
+      <div class="card">
+        <div class="section-label">
+          <span>1. 上传票据与支付截图</span>
+          <span id="fileCountLabel">0 个文件</span>
+        </div>
+
+        <div class="dropzone" id="dropzone">
+          <input type="file" id="fileInput" multiple accept=".png,.jpg,.jpeg,.webp,.pdf" class="hidden" />
+          <div class="dropzone-icon">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+          </div>
+          <div class="dropzone-title">拖拽或点击选择多张截图 / 照片 / PDF</div>
+          <div class="dropzone-sub">支持微信支付、支付宝账单、纸质小票拍照与酒店水单</div>
+        </div>
+
+        <div class="thumb-grid hidden" id="thumbGrid"></div>
+
+        <div class="section-label"><span>2. 报销说明与项目信息</span></div>
+
+        <div class="field">
+          <label for="queryInput">报销事由与核验指令</label>
+          <textarea id="queryInput">请批量核验我本次带队出门上传的全部支付截图与小票照片，识别每笔时间、商户、用途、支付渠道与金额，剔除个人自费项并检查是否存在重复票据，用精确算术工具汇总总额后，生成一份带汇总表和票据照片附件的 Word (.docx) 报销明细单。</textarea>
+        </div>
+
+        <div class="row-2">
+          <div class="field">
+            <label for="applicantInput">报销人 / 带队人</label>
+            <input id="applicantInput" type="text" value="张熠（带队负责人）" />
+          </div>
+          <div class="field">
+            <label for="projectInput">归属项目代码</label>
+            <input id="projectInput" type="text" value="PRJ-PANGU-2" />
+          </div>
+        </div>
+
+        <div class="toggle-row">
+          <div>
+            <span>导出排版 Word 报销单（.docx）</span>
+            <small>含费用汇总表、重复预警框及自动缩放居中票据原图</small>
+          </div>
+          <label class="switch">
+            <input type="checkbox" id="docxToggle" checked />
+            <span class="slider"></span>
+          </label>
+        </div>
+
+        <button class="btn-primary" id="btnSubmit" type="button">
+          <span id="btnLabel">智能核验并生成报销单</span>
+        </button>
+      </div>
+
+      <!-- Right: Live Pipeline & Deliverable -->
+      <div class="card">
+        <div class="pipeline" id="pipelineBar">
+          <span class="stage-pill" data-stage="0">1. OCR + VLM 识图</span>
+          <span class="stage-pill" data-stage="1">2. 记忆与差标匹配</span>
+          <span class="stage-pill" data-stage="2">3. 异构模型与 MCP 路由</span>
+          <span class="stage-pill" data-stage="3">4. AST 算术与防重核验</span>
+          <span class="stage-pill" data-stage="4">5. Word 排版与 SHA-256 验收</span>
+        </div>
+
+        <div id="emptyView" class="empty-state">
+          <h2>把凌乱票据交给我，15 秒交付可打印报销单</h2>
+          <p>无需手动抄写小票金额或逐张缩放截图贴进 Word。点击右上角“一键加载带队示例票据”即可立即体验完整流程。</p>
+          <div class="feature-steps">
+            <div class="f-step">
+              <div class="f-num">01 / PERCEPTION</div>
+              <h3>纯像素 OCR + VLM 复核</h3>
+              <p>本地 ONNX RapidOCR 提取坐标文本，配合原生视觉模型核对微信/支付宝与小票明细。</p>
+            </div>
+            <div class="f-step">
+              <div class="f-num">02 / VERIFICATION</div>
+              <h3>AST 零误差算术 + 防重预警</h3>
+              <p>杜绝大模型心算小数误差；自动标出“同日同额支付截图+纸质小票”疑似重复报销。</p>
+            </div>
+            <div class="f-step">
+              <div class="f-num">03 / DELIVERABLE</div>
+              <h3>企业级 Word 图文排版</h3>
+              <p>自动生成 A4 规范报销表与逐页居中票据原图附件，下载即可打印或提交财务。</p>
+            </div>
+          </div>
+        </div>
+
+        <div id="resultView" class="hidden">
+          <div id="downloadBar" class="download-bar hidden">
+            <div class="dl-info">
+              <strong id="dlTitle">Word 报销文档已就绪</strong>
+              <span id="dlSub">已通过 SHA-256 落盘校验与 AST 算术核验</span>
+            </div>
+            <div class="dl-actions" id="dlActions"></div>
+          </div>
+
+          <div id="alertBanner" class="alert hidden"></div>
+
+          <div class="kpi-grid">
+            <div class="kpi">
+              <div class="kpi-label">状态 / 核定报销额</div>
+              <div class="kpi-val accent" id="kpiNet">—</div>
+              <div class="kpi-sub" id="kpiState">—</div>
+            </div>
+            <div class="kpi">
+              <div class="kpi-label">异构路由模型</div>
+              <div class="kpi-val" style="font-size:15px" id="kpiModel">—</div>
+              <div class="kpi-sub" id="kpiTier">—</div>
+            </div>
+            <div class="kpi">
+              <div class="kpi-label">Prefix KV-Cache 命中</div>
+              <div class="kpi-val" id="kpiCache">—</div>
+              <div class="kpi-sub" id="kpiTokens">—</div>
+            </div>
+            <div class="kpi">
+              <div class="kpi-label">端到端耗时</div>
+              <div class="kpi-val" id="kpiLatency">—</div>
+              <div class="kpi-sub" id="kpiTools">—</div>
+            </div>
+          </div>
+
+          <div class="section-label"><span>核验摘要与明细说明</span></div>
+          <div class="report-box" id="answerBox"></div>
+
+          <details class="trace-details">
+            <summary>查看工具调用链路、安全沙箱裁决与工作区 SHA-256 证据</summary>
+            <div class="trace-list" id="traceList"></div>
+          </details>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <script>
+    const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+
+    function renderMarkdown(md) {
+      const inline = (t) => esc(t)
+        .replace(/`([^`]+)`/g, "<code>$1</code>")
+        .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
+      const lines = String(md || "").split(/\r?\n/);
+      const out = [];
+      let i = 0;
+      while (i < lines.length) {
+        const line = lines[i].trim();
+        if (!line) { i++; continue; }
+        // Markdown table
+        if (line.startsWith("|") && i + 1 < lines.length && /^\|[\s:-]+\|/.test(lines[i + 1].trim())) {
+          const splitRow = (r) => r.trim().replace(/^\|/, "").replace(/\|$/, "").split("|").map((c) => inline(c.trim()));
+          const headers = splitRow(line);
+          i += 2;
+          const rows = [];
+          while (i < lines.length && lines[i].trim().startsWith("|")) { rows.push(splitRow(lines[i])); i++; }
+          out.push(`<table class="report-table"><thead><tr>${headers.map((h) => `<th>${h}</th>`).join("")}</tr></thead><tbody>${rows.map((r) => `<tr>${r.map((c) => `<td>${c}</td>`).join("")}</tr>`).join("")}</tbody></table>`);
+          continue;
+        }
+        if (line.startsWith("### ")) { out.push(`<h3>${inline(line.slice(4))}</h3>`); i++; continue; }
+        if (line.startsWith("## ") || line.startsWith("# ")) { out.push(`<h2>${inline(line.replace(/^#+\s*/, ""))}</h2>`); i++; continue; }
+        if (/^[-*•]\s+/.test(line)) {
+          const items = [];
+          while (i < lines.length && /^[-*•]\s+/.test(lines[i].trim())) { items.push(`<li>${inline(lines[i].trim().replace(/^[-*•]\s+/, ""))}</li>`); i++; }
+          out.push(`<ul>${items.join("")}</ul>`);
+          continue;
+        }
+        out.push(`<p>${inline(line)}</p>`);
+        i++;
+      }
+      return out.join("");
+    }
+
+    const state = { files: [], sampleMode: false };
+    const dropzone = document.getElementById("dropzone");
+    const fileInput = document.getElementById("fileInput");
+    const thumbGrid = document.getElementById("thumbGrid");
+    const fileCountLabel = document.getElementById("fileCountLabel");
+    const btnSubmit = document.getElementById("btnSubmit");
+    const btnLabel = document.getElementById("btnLabel");
+
+    async function loadHealth() {
+      try {
+        const res = await fetch("/health");
+        const d = await res.json();
+        const modeTxt = d.mode === "mock" ? "离线 Mock 模式" : `${d.slm_model} + ${d.llm_model}`;
+        document.getElementById("sysStatus").innerHTML =
+          `<span class="status-dot"></span><span>${modeTxt} · ${d.registered_tools} 工具 (Stdio MCP)</span>`;
+      } catch {
+        document.getElementById("sysStatus").innerHTML = `<span class="status-dot" style="background:#ef4444"></span><span>服务未连接</span>`;
+      }
+    }
+    loadHealth();
+
+    function renderThumbs() {
+      fileCountLabel.textContent = `${state.files.length} 个文件`;
+      if (!state.files.length) {
+        thumbGrid.classList.add("hidden");
+        thumbGrid.innerHTML = "";
+        return;
+      }
+      thumbGrid.classList.remove("hidden");
+      thumbGrid.innerHTML = "";
+      state.files.forEach((f, idx) => {
+        const card = document.createElement("div");
+        card.className = "thumb-card";
+        const isPdf = f.name.toLowerCase().endsWith(".pdf");
+        if (isPdf) {
+          card.innerHTML = `<div class="thumb-pdf">PDF 水单</div>`;
+        } else {
+          const img = document.createElement("img");
+          img.className = "thumb-img";
+          img.src = f.previewUrl || URL.createObjectURL(f);
+          card.appendChild(img);
+        }
+        const meta = document.createElement("div");
+        meta.className = "thumb-meta";
+        meta.title = f.name;
+        meta.textContent = f.name;
+        card.appendChild(meta);
+
+        const del = document.createElement("button");
+        del.className = "thumb-del";
+        del.textContent = "×";
+        del.onclick = (e) => {
+          e.stopPropagation();
+          state.files.splice(idx, 1);
+          renderThumbs();
+        };
+        card.appendChild(del);
+        thumbGrid.appendChild(card);
+      });
+    }
+
+    function addFiles(fileList) {
+      state.sampleMode = false;
+      for (const f of fileList) state.files.push(f);
+      renderThumbs();
+    }
+
+    dropzone.onclick = () => fileInput.click();
+    fileInput.onchange = (e) => { addFiles(e.target.files); fileInput.value = ""; };
+    dropzone.ondragover = (e) => { e.preventDefault(); dropzone.classList.add("dragover"); };
+    dropzone.ondragleave = () => dropzone.classList.remove("dragover");
+    dropzone.ondrop = (e) => { e.preventDefault(); dropzone.classList.remove("dragover"); addFiles(e.dataTransfer.files); };
+
+    document.getElementById("btnLoadSamples").onclick = async () => {
+      const res = await fetch("/v1/steward/sample-pack");
+      const data = await res.json();
+      state.files = [];
+      for (const item of data.files) {
+        const blob = await (await fetch(item.url)).blob();
+        const file = new File([blob], item.name, { type: blob.type || "image/png" });
+        file.previewUrl = item.url;
+        state.files.push(file);
+      }
+      renderThumbs();
+    };
+
+    function setPipelineStage(activeIdx, allDone = false) {
+      document.querySelectorAll(".stage-pill").forEach((el, idx) => {
+        el.classList.remove("active", "done");
+        if (allDone || idx < activeIdx) el.classList.add("done");
+        else if (idx === activeIdx) el.classList.add("active");
+      });
+    }
+
+    function renderResult(data) {
+      document.getElementById("emptyView").classList.add("hidden");
+      document.getElementById("resultView").classList.remove("hidden");
+      setPipelineStage(5, data.final_state === "COMPLETED");
+
+      // Parse docx metadata from executed_tools if present
+      let docxInfo = null;
+      for (const t of (data.executed_tools || [])) {
+        if (t.tool_name === "export_reimbursement_docx" && t.status === "ok") {
+          try { docxInfo = JSON.parse(t.output_json); } catch {}
+        }
+      }
+
+      const netAmt = docxInfo ? `¥ ${Number(docxInfo.ast_verified_net_cny).toLocaleString("zh-CN", {minimumFractionDigits: 2})}` : data.final_state;
+      document.getElementById("kpiNet").textContent = netAmt;
+      document.getElementById("kpiState").textContent = `${data.final_state}` + (docxInfo ? ` · ${docxInfo.embedded_photos} 张原图` : "");
+
+      const rd = data.routing_decision || {};
+      document.getElementById("kpiModel").textContent = rd.model_id || "—";
+      document.getElementById("kpiTier").textContent = rd.redacted_for_cloud ? "Fail-Closed 脱敏隐私通道" : (rd.tier || "—");
+
+      const inTok = data.total_input_tokens || 0;
+      const caTok = data.total_cached_input_tokens || 0;
+      const pct = inTok > 0 ? `${((caTok / inTok) * 100).toFixed(1)}%` : "0%";
+      document.getElementById("kpiCache").textContent = pct;
+      document.getElementById("kpiTokens").textContent = `${inTok} in / ${caTok} cached`;
+
+      document.getElementById("kpiLatency").textContent = `${((data.latency_ms || 0) / 1000).toFixed(2)} s`;
+      const ts = data.tool_selection || {};
+      document.getElementById("kpiTools").textContent = `裁剪 ${ts.selected_names?.length || 0}/${ts.total_registered || 0} 工具`;
+
+      // Download bar
+      const dlBar = document.getElementById("downloadBar");
+      const dlActions = document.getElementById("dlActions");
+      dlActions.innerHTML = "";
+      const changed = (data.audit_verdict && data.audit_verdict.changed_workspace_files) || [];
+      if (docxInfo || changed.length) {
+        dlBar.classList.remove("hidden");
+        document.getElementById("dlTitle").textContent = docxInfo
+          ? `Word 报销单已生成：${docxInfo.saved_file}`
+          : `已生成 ${changed.length} 份工作区报销文件`;
+        document.getElementById("dlSub").textContent = docxInfo
+          ? `共 ${docxInfo.item_count} 笔费用 · 剔除自费 ¥${Number(docxInfo.excluded_total_cny).toFixed(2)} · 已贴入 ${docxInfo.embedded_photos} 张票据照片`
+          : "已通过 SHA-256 工作区快照落盘核验";
+        const filesToShow = docxInfo ? [docxInfo.saved_file, ...changed.filter(x => x !== docxInfo.saved_file)] : changed;
+        for (const fn of filesToShow) {
+          const a = document.createElement("a");
+          a.className = "btn-download";
+          a.href = `/v1/steward/files/${encodeURIComponent(fn)}`;
+          a.download = fn;
+          a.textContent = fn.endsWith(".docx") ? "下载 Word 报销单" : `下载 ${fn}`;
+          dlActions.appendChild(a);
+        }
+      } else {
+        dlBar.classList.add("hidden");
+      }
+
+      // Alerts / HITL Resume Banner
+      const alertEl = document.getElementById("alertBanner");
+      alertEl.className = "alert hidden";
+      alertEl.innerHTML = "";
+      if (data.final_state === "HALTED_APPROVAL" && data.checkpoint_id) {
+        alertEl.className = "alert halt";
+        alertEl.innerHTML = `<strong>需人工确认放行（SQLite Checkpoint 已持久保存）</strong><br/>` +
+          `断点 ID：<code>${esc(data.checkpoint_id)}</code> · HMAC 参数指纹：<code>${esc(data.action_fingerprint)}</code><br/>`;
+        const btn = document.createElement("button");
+        btn.className = "btn-approve";
+        btn.textContent = "确认 HMAC 指纹并从断点续跑打款";
+        btn.onclick = async () => {
+          btn.disabled = true;
+          btn.textContent = "正在断点续跑...";
+          const r = await fetch("/v1/steward/resume", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ checkpoint_id: data.checkpoint_id, approval_token: `APR_${data.action_fingerprint}` }),
+          });
+          renderResult(await r.json());
+        };
+        alertEl.appendChild(btn);
+      } else if (docxInfo && docxInfo.duplicate_warnings && docxInfo.duplicate_warnings.length) {
+        alertEl.className = "alert warn";
+        alertEl.innerHTML = `<strong>⚠ 检测到疑似重复票据（已同步标红写入 Word 文档）</strong><br/>` +
+          docxInfo.duplicate_warnings.map(w => `• ${esc(w)}`).join("<br/>");
+      } else if (docxInfo) {
+        alertEl.className = "alert ok";
+        alertEl.textContent = `✓ 全部 ${docxInfo.item_count} 笔费用均经 AST 算术核验，未检测到重复报销票据。`;
+      }
+
+      document.getElementById("answerBox").innerHTML = renderMarkdown(data.answer || "");
+
+      const traceList = document.getElementById("traceList");
+      traceList.innerHTML = "";
+      (data.executed_tools || []).forEach((t, i) => {
+        const div = document.createElement("div");
+        div.textContent = `#${i + 1} [${t.status}] ${t.tool_name}(${JSON.stringify(t.arguments).slice(0, 120)})`;
+        traceList.appendChild(div);
+      });
+      if (changed.length) {
+        const fDiv = document.createElement("div");
+        fDiv.textContent = `SHA-256 Verified Workspace Files: ${changed.join(", ")}`;
+        traceList.appendChild(fDiv);
+      }
+    }
+
+    btnSubmit.onclick = async () => {
+      const q = document.getElementById("queryInput").value.trim();
+      if (!q) return;
+      btnSubmit.disabled = true;
+      btnLabel.innerHTML = `<span class="spinner"></span> 正在像素识图与核验排版...`;
+      let step = 0;
+      setPipelineStage(0);
+      const timer = setInterval(() => { step = Math.min(4, step + 1); setPipelineStage(step); }, 2400);
+
+      try {
+        const fd = new FormData();
+        fd.append("query", q);
+        fd.append("applicant", document.getElementById("applicantInput").value.trim());
+        fd.append("project_code", document.getElementById("projectInput").value.trim());
+        fd.append("export_docx", document.getElementById("docxToggle").checked ? "true" : "false");
+        for (const f of state.files) fd.append("files", f, f.name);
+
+        const res = await fetch("/v1/steward/reimburse-upload", { method: "POST", body: fd });
+        const data = await res.json();
+        clearInterval(timer);
+        if (!res.ok) throw new Error(data.detail || "请求失败");
+        renderResult(data);
+      } catch (err) {
+        clearInterval(timer);
+        alert("执行失败：" + err.message);
+      } finally {
+        btnSubmit.disabled = false;
+        btnLabel.textContent = "智能核验并生成报销单";
+      }
+    };
+  </script>
+</body>
+</html>

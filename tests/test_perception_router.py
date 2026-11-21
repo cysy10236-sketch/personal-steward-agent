@@ -53,9 +53,9 @@ def test_stdio_mcp_discovery_paired_pruning_and_fail_closed_privacy_vault(
         mcp_db_path=isolated_settings.mcp_db_path,
     )
     try:
-        # Verify real stdio JSON-RPC MCP discovery (9 MCP + 5 local = 14 tools)
+        # Verify real stdio JSON-RPC MCP discovery (9 MCP + 7 local = 16 tools)
         assert len(tools.mcp_client.tool_specs) == 9
-        assert len(tools.all_specs()) == 14
+        assert len(tools.all_specs()) == 16
 
         selector = PairedMcpToolSelector(DeterministicBilingualEmbedder(dim=256))
         sel = selector.select("请先查询现有日程避免冲突，然后在明天下午锁定日程会议", tools.all_specs(), budget=6)

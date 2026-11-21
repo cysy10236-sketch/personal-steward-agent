@@ -85,7 +85,12 @@ class ArtifactRegistry:
 
     def get(self, ref: str) -> ReceiptArtifact | None:
         clean = ref.replace("artifact://", "").strip()
-        return self._items.get(clean)
+        if clean in self._items:
+            return self._items[clean]
+        for art in self._items.values():
+            if Path(art.source_path).name == clean:
+                return art
+        return None
 
     def inspect_roi(
         self,

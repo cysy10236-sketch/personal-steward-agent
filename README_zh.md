@@ -1,14 +1,16 @@
-# TripLedger Steward (`personal-steward-agent` v2.0)
+# TripLedger Steward (`personal-steward-agent` v2.1)
 
 **[English](README.md)** | **简体中文**
 
-**生产级个人差旅管理、纯像素多模态水单审计与跨项目报销智能体系统（Personal Agent Harness）**
+**生产级个人差旅管理、多票据自动排版 Word（`.docx`）报销工坊与跨项目审计智能体（Personal Agent Harness）**
+
+![TripLedger Steward Minimalist Web Studio](reports/web_studio_demo.png)
 
 ![Benchmark & Ablation Overview](reports/benchmark_ablation.png)
 
-## 1. 业务场景与工程核心（v2.0 全量加固版）
+## 1. 业务场景与工程核心（v2.1 极简报销工坊 + 全量加固版）
 
-TripLedger Steward 锚定高频低容错的**个人商务差旅、多模态票据审计与跨项目报销**垂直场景，系统性解决跨会话改签冲突（`CA1301 -> G79`）、8 个同质项目干扰下的 2 跳差标归属（`客户拜访 -> 归属项目 -> 差标与审批人`）、4 页酒店水单与无元数据纯像素截图核验、实名隐私合规与超额打款人机协同审批断点续跑。
+TripLedger Steward 锚定高频低容错的**带队出行多票据报销与个人商务差旅审计**垂直场景：支持批量上传微信支付截图、支付宝账单、餐饮/打车纸质小票照片与多页酒店 PDF 水单，自动完成纯像素 OCR + 原生 VLM 复核、同日同额重复票据预警、个人自费剔除与 AST 精确算术汇总，**一键导出含费用汇总表与清晰缩放票据原图的企业级 Word（`.docx`）报销单**；同时覆盖跨会话改签覆盖（`CA1301 -> G79`）、2 跳跨项目差标检索、Fail-Closed PII 隐私保险库与超额打款人机协同断点续跑。
 
 ```mermaid
 flowchart TD
@@ -37,7 +39,8 @@ flowchart TD
 | **纯像素 ONNX OCR + 原生 VLM 视觉复核** | `src/perception/receipt_parser.py`<br>`src/perception/artifact_registry.py` | 零 PNG 隐藏元数据作弊：PDF 表格采用 `PyMuPDF` `clip=cbox` 单元格裁剪并过滤日期列；原始 PNG 截图经本地 ONNX `RapidOCR` 识别像素坐标与金额，并在 `inspect_receipt_roi` 阶段将局部 `base64_png` 送入原生视觉模型（`deepseek-flash` Vision）交叉复核。 |
 | **混合个人记忆与通用实体拒答引擎** | `src/memory/steward_memory.py`<br>`src/memory/tokenizer_embedder.py` | SQLite WAL + `FTS5` BM25 + 256 维双语向量 + 纯 NumPy 幂迭代有向 PPR（$\alpha=0.85$，含悬挂节点质量守恒及无图种子权重重归一）+ 水位线单值槽位覆盖 + 零硬编码城市/品牌名的通用实体覆盖拒答门控。 |
 | **Fail-Closed 隐私保险库 + 拟合逻辑斯蒂路由** | `src/router/steward_router.py` | 未配置 `LOCAL_SLM_BASE_URL` 时绝不 Fail-Open 外发云端：`PrivacyVault` 在本地完成 GB 11643 身份证与 Luhn 银行卡校验并剥离明文 PII 为 `<PII_*>` 占位符；6 维路由权重经 NumPy 梯度下降拟合（留出验证集准确率 **95.8%**，Brier **0.0247**，ECE **0.1028**）；`pair_group` 成对裁剪（14→6）+ 字节恒定 Prefix KV-Cache。 |
-| **Checkpoint 断点续跑 + 加固沙箱** | `src/agent/state_machine.py`<br>`src/agent/sandbox.py`<br>`src/agent/tools.py` | 13 态强契约 FSM；SQLite `CheckpointStore` 支持 `HALTED_APPROVAL -> resume(checkpoint_id, approval_token)` 真实人工批准续跑与 HMAC-SHA256 参数指纹防篡改；零 `eval()` 的 `ASTExpenseCalculator`；`shell=False` 只读命令白名单；重复调用熔断与长输出首尾压缩。 |
+| **多票据 Word（`.docx`）排版 + 极简 Web 工坊** | `src/perception/docx_exporter.py`<br>`src/web/index.html`<br>`main.py` | 批量并行识图 `inspect_all_receipts`（ONNX `RapidOCR` + `deepseek-flash` 原生视觉）+ 同日同额重复票据检测 + AST 核验后生成 A4 规范 `.docx`（汇总表 + 预警框 + EXIF 校正自适应缩放票据照片附件）；零构建依赖的 Apple/Google 极简风本地前端（`http://127.0.0.1:8088`），支持拖拽多图上传、一键加载带队示例票据与在线 HITL 断点续跑。 |
+| **Checkpoint 断点续跑 + 加固沙箱** | `src/agent/state_machine.py`<br>`src/agent/sandbox.py`<br>`src/agent/tools.py` | 13 态强契约 FSM；16 个注册工具（7 本地 + 9 `stdio` MCP）；SQLite `CheckpointStore` 支持 `HALTED_APPROVAL -> resume(checkpoint_id, approval_token)` 真实人工批准续跑与 HMAC-SHA256 参数指纹防篡改；零 `eval()` 的 `ASTExpenseCalculator`；`shell=False` 只读命令白名单；重复调用熔断与长输出首尾压缩。 |
 
 ---
 
@@ -90,6 +93,6 @@ Copy-Item .env.example .env
 # 3. 重跑 N_mem=24 + N_router=24 + N_e2e=16 全量基准并生成报告与 200 DPI 三联消融图
 .\.venv\Scripts\python -m src.eval.run_benchmark
 
-# 4. 启动 FastAPI 接口服务（含 /v1/steward/run 与 /v1/steward/resume）
+# 4. 启动极简风 Web 报销工坊与 FastAPI 服务 -> 浏览器访问 http://127.0.0.1:8088
 .\.venv\Scripts\python main.py --serve --port 8088
 ```

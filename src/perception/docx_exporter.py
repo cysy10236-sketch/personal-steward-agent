@@ -271,6 +271,7 @@ def build_reimbursement_docx(
     activity_photos: list[tuple[Path, str]] | None = None,
     activity_photo_note: str = "",
     include_signoff: bool = True,
+    audit_seal_sha256: str = "",
 ) -> ReimbursementDocxResult:
     """Render a minimalist Apple/Corporate-styled A4 .docx reimbursement report with embedded photos."""
     doc = Document()
@@ -279,6 +280,14 @@ def build_reimbursement_docx(
         sec.bottom_margin = Cm(1.5)
         sec.left_margin = Cm(1.7)
         sec.right_margin = Cm(1.7)
+        if audit_seal_sha256:
+            fp = sec.footer.paragraphs[0]
+            fp.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+            _style_run(
+                fp.add_run(f"TripLedger Steward · AST 确定性核验封签 SHA-256: {audit_seal_sha256[:16]}"),
+                size_pt=7.5,
+                color=(148, 163, 184),
+            )
 
     normal = doc.styles["Normal"]
     normal.font.name = "Microsoft YaHei"

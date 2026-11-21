@@ -40,6 +40,7 @@ class LLMProviderProtocol(Protocol):
         model_id: str,
         tier: ModelTier,
         tools: list[ToolSchemaSpec] | None = None,
+        escalated: bool = False,
     ) -> LLMCompletion: ...
 
     async def inspect_image_crop(
@@ -77,6 +78,7 @@ class OpenAICompatibleProvider:
         model_id: str,
         tier: ModelTier,
         tools: list[ToolSchemaSpec] | None = None,
+        escalated: bool = False,
     ) -> LLMCompletion:
         if tier == ModelTier.LOCAL_PRIVACY_SLM:
             if self._local_client is None:
@@ -97,7 +99,8 @@ class OpenAICompatibleProvider:
             "temperature": self.settings.temperature,
         }
         if "deepseek" in model_id.lower():
-            kwargs["reasoning_effort"] = "low"
+            # Audit-Gated Adaptive Reasoning: System-1 fast execution on pass 0; System-2 deep thinking only on audit retry
+            kwargs["reasoning_effort"] = "low" if escalated else "none"
         else:
             kwargs["seed"] = self.settings.random_seed
 
@@ -174,10 +177,10 @@ class OpenAICompatibleProvider:
                 }
             ],
             "temperature": 0.0,
-            "max_tokens": 512,
+            "max_tokens": 1024,
         }
         if "deepseek" in self.settings.vlm_model.lower():
-            vlm_kwargs["reasoning_effort"] = "low"
+            vlm_kwargs["reasoning_effort"] = "none"
         resp = await self._cloud_client.chat.completions.create(**vlm_kwargs)
         txt = (resp.choices[0].message.content or "").strip()
         u = resp.usage
@@ -230,6 +233,7 @@ class MockLLMProvider:
         model_id: str,
         tier: ModelTier,
         tools: list[ToolSchemaSpec] | None = None,
+        escalated: bool = False,
     ) -> LLMCompletion:
         self._seq += 1
         await asyncio.sleep(0.003 if tier != ModelTier.FRONTIER_LLM else 0.008)

@@ -1,8 +1,8 @@
-# TripLedger Steward (`personal-steward-agent` v2.1)
+# TripLedger Steward (`personal-steward-agent` v2.3)
 
 **English** | **[简体中文](README_zh.md)**
 
-**Production-Hardened Personal Travel, Multi-Receipt Word (`.docx`) Reimbursement Studio & Cross-Project Expense Agent**
+**Production-Hardened Personal Travel, Autonomous `.rar`/`.zip` -> Word (`.docx`) Reimbursement Studio & Deterministic Financial Audit Agent**
 
 ![TripLedger Steward Minimalist Web Studio](reports/web_studio_demo.png)
 
@@ -70,7 +70,17 @@ Measured via `python -m src.eval.run_benchmark` (`temperature=0.0`, `seed=42`; r
 | + Pure-NumPy Directed PPR ($\alpha=0.85$) | **97.2% ± 4.2%** | **0.9722** | **100.0%** | **100.0%** | 91.7% | 0.0% |
 | **+ Generic Entity-Coverage Abstention (Full)** | **97.2% ± 4.2%** | **0.9722** | **100.0%** | **100.0%** | **91.7%** | **90.9%** |
 
-### 2.3 Documented Bad Cases & Failure Mode Boundaries
+### 2.3 Real-World 26-File `.rar` Archive End-to-End Speedup (Zero Human Hints)
+
+Evaluated autonomously on a real 26-file campus event reimbursement `.rar` archive (3 scanned PDFs, 2 text PDFs, 2 mobile payment JPGs, 1 `.docx` event proposal, 1 `.xlsx` roster with Excel serial dates, and 17 scene photos):
+
+| Optimization Stage | End-to-End Latency | Output Tokens | AST Verified Net / Seal | Engineering Mechanism |
+| :--- | :---: | :---: | :---: | :--- |
+| **v2.2 Baseline (Serial CPU OCR + CoT)** | 139.63 s | 13,238 | ¥ 185.10 / none | Single-process CPU RapidOCR (55.8 s) + 4 Frontier CoT turns |
+| **v2.3.0 Parallel Native VLM Fast-Path** | 99.28 s | 10,121 | ¥ 185.10 / `d0b9cf1f960f318b` | Scanned PDFs deferred to concurrent `deepseek-flash` VLM (perception **56.5 s → 3.9 s, 14.4× faster**) |
+| **v2.3 Audit-Gated Adaptive Reasoning** | **30.30 s (4.6× faster / -78.3%)** | **3,291 (-75.1%)** | **¥ 185.10 (bal ¥ 14.90)**<br>`SHA-256: d0b9cf1f960f318b` | **System-1 `reasoning_effort="none"` + Fail-Fast AST Row-Identity Gate + Post-Export SLM Synthesis** (auto-escalates to System-2 `"low"` only on audit failure) |
+
+### 2.4 Documented Bad Cases & Failure Mode Boundaries
 
 1. **Memory `M23` (Zero-Overlap Colloquial Paraphrase)**: `"月底华东那场边缘计算大会的经费归属和主管是谁？"` recalled bridge `mem_pg_bridge` (`华东边缘峰会 -> 盘古二期项目`) but missed 2-hop `mem_pg_rule` because `"边缘计算大会"` lacked exact seed overlap with graph node `"华东边缘峰会"`. Fix path: replace N-gram hash embedder with learned multilingual dense encoder (`bge-m3`) + semantic entity linking.
 2. **E2E `MEM-04` (Tool-Induced Cross-Domain Leakage After Memory Abstention)**: Even though `StewardMemoryEngine` accurately abstained on the unrecorded Harbin hotel query (`abstained=True`), `deepseek-flash` proactively invoked `mcp_expense_pool_query` and quoted `PRJ-PANGU-2`'s `850` CNY cap as an unrequested side note. Fix path: restrict financial pool lookups when `<recalled_memories status="abstained_or_empty" />` on historical-expense lookup intents.

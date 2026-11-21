@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import hashlib
 import io
 import json
 import os
@@ -12,13 +13,15 @@ import shlex
 import subprocess
 from typing import Any, Callable
 
+import pymupdf as fitz
 from PIL import Image, ImageOps
 from pydantic import BaseModel, Field, ValidationError
 
 from ..llm.provider import LLMProviderProtocol
 from ..mcp.client import StdioMcpClient
 from ..perception.artifact_registry import ArtifactRegistry
-from ..perception.docx_exporter import ExpenseLineItem, build_reimbursement_docx
+from ..perception.docx_exporter import ExpenseLineItem, _trim_white_margins, build_reimbursement_docx
+from ..perception.receipt_parser import detect_prompt_injection
 from ..router.steward_router import ToolSchemaSpec
 from .sandbox import ASTExpenseCalculator
 
@@ -314,16 +317,41 @@ class StewardToolRegistry:
         elif tool_name == "inspect_all_receipts":
             payload = json.loads(rec.output_json)
             receipts = payload.get("receipts", [])
-            img_tasks: list[tuple[str, int, Any]] = []
+            pdf_vlm_prompt = (
+                "Carefully extract exact factual fields from this scanned invoice/receipt/payment page in concise Chinese: "
+                "document type (电子发票/机打小票/支付记录/行程单), invoice or transaction order number, date/time, "
+                "buyer name & tax ID (if shown), seller/merchant name, tax-exclusive amount, tax amount, "
+                "gross total (价税合计/实付金额), any personal/excluded items, and concise item category summary. "
+                "Preserve every single digit accurately."
+            )
+            img_tasks: list[tuple[str, int, str, Any]] = []
             for idx, item in enumerate(receipts):
                 art = self.artifact_registry.get(str(item.get("handle", "")))
-                if art is not None and art.modality == "image":
+                if art is None:
+                    continue
+                if art.modality == "image":
                     pil = ImageOps.exif_transpose(Image.open(art.source_path)).convert("RGB")
-                    pil.thumbnail((1024, 1024), Image.Resampling.LANCZOS)
+                    pil.thumbnail((1152, 1152), Image.Resampling.LANCZOS)
                     buf = io.BytesIO()
                     pil.save(buf, format="PNG", optimize=True)
                     b64 = base64.b64encode(buf.getvalue()).decode("ascii")
-                    img_tasks.append(("receipt", idx, llm.inspect_image_crop(b64, prompt=vlm_prompt)))
+                    img_tasks.append(("receipt", idx, "img", llm.inspect_image_crop(b64, prompt=vlm_prompt)))
+                elif art.modality == "pdf" and art.structured_kv.get("ocr_deferred_for_vlm"):
+                    scanned = list(art.structured_kv.get("scanned_pages") or [])[:4]
+                    if scanned:
+                        pdf_doc = fitz.open(art.source_path)
+                        try:
+                            for p_idx in scanned:
+                                if p_idx < len(pdf_doc):
+                                    pix = pdf_doc[p_idx].get_pixmap(dpi=165, alpha=False)
+                                    pil = _trim_white_margins(Image.frombytes("RGB", (pix.width, pix.height), pix.samples))
+                                    pil.thumbnail((1440, 1440), Image.Resampling.LANCZOS)
+                                    buf = io.BytesIO()
+                                    pil.save(buf, format="PNG", optimize=True)
+                                    b64 = base64.b64encode(buf.getvalue()).decode("ascii")
+                                    img_tasks.append(("pdf_page", idx, f"p{p_idx + 1}", llm.inspect_image_crop(b64, prompt=pdf_vlm_prompt)))
+                        finally:
+                            pdf_doc.close()
 
             photo_prompt = "用一句简洁客观的中文（15-28字）描述这张活动现场照片的核心画面内容（例如授课主题PPT、课堂互动、全体合影等），不要臆造文字。"
             activity_previews: list[dict[str, str]] = []
@@ -335,24 +363,33 @@ class StewardToolRegistry:
                     buf = io.BytesIO()
                     pil.save(buf, format="PNG", optimize=True)
                     b64 = base64.b64encode(buf.getvalue()).decode("ascii")
-                    img_tasks.append(("photo", p_idx, llm.inspect_image_crop(b64, prompt=photo_prompt)))
+                    img_tasks.append(("photo", p_idx, p_path.name, llm.inspect_image_crop(b64, prompt=photo_prompt)))
 
             if img_tasks:
-                results = await asyncio.gather(*(coro for _, _, coro in img_tasks), return_exceptions=True)
-                for (kind, idx, _), res in zip(img_tasks, results):
+                results = await asyncio.gather(*(coro for _, _, _, coro in img_tasks), return_exceptions=True)
+                pdf_page_notes: dict[int, list[str]] = {}
+                for (kind, idx, tag, _), res in zip(img_tasks, results):
                     if isinstance(res, Exception):
-                        if kind == "receipt":
+                        if kind in {"receipt", "pdf_page"}:
                             receipts[idx]["vlm_error"] = f"{type(res).__name__}: {res}"
                     else:
                         vtxt, vi, vo = res
                         vlm_in += vi
                         vlm_out += vo
+                        taints = detect_prompt_injection(vtxt)
+                        if taints and kind in {"receipt", "pdf_page"}:
+                            receipts[idx]["tainted"] = True
+                            receipts[idx]["taint_reasons"] = taints
                         if kind == "receipt":
                             receipts[idx]["vlm_pixel_verification"] = vtxt
+                        elif kind == "pdf_page":
+                            pdf_page_notes.setdefault(idx, []).append(f"[{tag}] {vtxt}")
                         else:
                             clean_cap = vtxt.strip().replace("\n", " ")[:60]
                             activity_previews[idx]["vlm_caption"] = clean_cap
                             self._session_photo_vlm_captions[self._session_activity_photos[idx].name] = clean_cap
+                for idx, notes in pdf_page_notes.items():
+                    receipts[idx]["vlm_pixel_verification"] = "\n".join(notes)
                 payload["receipts"] = receipts
                 if activity_previews:
                     payload["activity_photos_preview"] = activity_previews
@@ -400,9 +437,40 @@ class StewardToolRegistry:
     def _handle_export_docx(self, args: _ExportDocxArgs) -> dict[str, Any]:
         fname = args.filename if args.filename.lower().endswith(".docx") else f"{args.filename}.docx"
         target = self._safe_workspace_path(fname)
-        # Re-verify total arithmetically via ASTExpenseCalculator
-        expr = " + ".join(str(i.reimbursable_cny) for i in args.items) if args.items else "0"
-        ast_sum = ASTExpenseCalculator.evaluate(expr)
+
+        # Deterministic Financial Audit Gate (Fail-Fast on any row subtraction hallucination!)
+        row_errors: list[str] = []
+        for idx, it in enumerate(args.items, start=1):
+            expected_net = ASTExpenseCalculator.evaluate(f"round({it.gross_amount_cny} - {it.excluded_personal_cny}, 2)")
+            if abs(expected_net - round(it.reimbursable_cny, 2)) > 0.01:
+                row_errors.append(
+                    f"Item #{idx} ({it.merchant_or_desc[:24]}): gross({it.gross_amount_cny}) - excluded({it.excluded_personal_cny}) = {expected_net}, got reimbursable_cny={it.reimbursable_cny}"
+                )
+        if row_errors:
+            return {"status": "error", "error": "AST row arithmetic audit failed: " + "; ".join(row_errors)}
+
+        ast_sum = ASTExpenseCalculator.evaluate(" + ".join(str(i.reimbursable_cny) for i in args.items) if args.items else "0")
+        eff_warnings = list(args.extra_warnings)
+        budget_remaining: float | None = None
+        if args.budget_cap_cny is not None:
+            budget_remaining = ASTExpenseCalculator.evaluate(f"round({args.budget_cap_cny} - {ast_sum}, 2)")
+            if budget_remaining < 0:
+                eff_warnings.insert(
+                    0,
+                    f"超预算预警：本次核定报销总额 ¥{ast_sum:.2f} 超出预算上限 ¥{args.budget_cap_cny:.2f}（超支 ¥{abs(budget_remaining):.2f}），需特批签字。",
+                )
+
+        # Tamper-evident SHA-256 Evidence Seal binding input voucher digests + AST total
+        voucher_digests = sorted(
+            art.sha256[:12]
+            for h in self._session_voucher_handles
+            if (art := self.artifact_registry.get(h)) is not None
+        )
+        seal_payload = json.dumps(
+            {"vouchers": voucher_digests, "ast_net_cny": ast_sum, "item_count": len(args.items)},
+            sort_keys=True,
+        )
+        audit_seal = hashlib.sha256(seal_payload.encode("utf-8")).hexdigest()
 
         act_pairs: list[tuple[Path, str]] | None = None
         act_note = ""
@@ -428,12 +496,13 @@ class StewardToolRegistry:
             trip_summary=args.trip_summary,
             items=args.items,
             artifact_registry=self.artifact_registry,
-            extra_warnings=args.extra_warnings,
+            extra_warnings=eff_warnings,
             include_all_registered_handles=self._session_voucher_handles,
             budget_cap_cny=args.budget_cap_cny,
             extra_sections=[s.model_dump() for s in args.extra_sections] if args.extra_sections else None,
             activity_photos=act_pairs,
             activity_photo_note=act_note,
+            audit_seal_sha256=audit_seal,
         )
         return {
             "status": "ok",
@@ -442,9 +511,11 @@ class StewardToolRegistry:
             "bytes_written": res.bytes_written,
             "item_count": res.item_count,
             "ast_verified_net_cny": ast_sum,
+            "budget_remaining_cny": budget_remaining,
             "gross_total_cny": res.gross_total_cny,
             "excluded_total_cny": res.excluded_total_cny,
             "embedded_photos": res.embedded_photos,
+            "audit_seal_sha256": audit_seal[:16],
             "duplicate_warnings": res.duplicate_warnings,
         }
 

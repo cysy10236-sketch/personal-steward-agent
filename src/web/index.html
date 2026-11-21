@@ -945,7 +945,8 @@
           ? `Word 报销单已生成：${docxInfo.saved_file}`
           : `已生成 ${changed.length} 份工作区报销文件`;
         document.getElementById("dlSub").textContent = docxInfo
-          ? `共 ${docxInfo.item_count} 笔费用 · 剔除自费 ¥${Number(docxInfo.excluded_total_cny).toFixed(2)} · 已贴入 ${docxInfo.embedded_photos} 张票据照片`
+          ? `共 ${docxInfo.item_count} 笔费用 · 剔除自费 ¥${Number(docxInfo.excluded_total_cny).toFixed(2)} · 已贴入 ${docxInfo.embedded_photos} 张原图` +
+            (docxInfo.audit_seal_sha256 ? ` · SHA-256 封签 ${docxInfo.audit_seal_sha256}` : "")
           : "已通过 SHA-256 工作区快照落盘核验";
         const filesToShow = docxInfo ? [docxInfo.saved_file, ...changed.filter(x => x !== docxInfo.saved_file)] : changed;
         for (const fn of filesToShow) {

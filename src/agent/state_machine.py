@@ -17,7 +17,7 @@ from PIL import Image
 from pydantic import BaseModel, Field
 
 from ..config import StewardSettings
-from ..llm.provider import LLMProviderProtocol, ToolCallRequest
+from ..llm.provider import LLMProviderProtocol, MockLLMProvider, ToolCallRequest
 from ..memory.steward_memory import MemorySearchResult, StewardMemoryEngine
 from ..observability.tracer import StructuredTracer, new_trace_id
 from ..perception.artifact_registry import ArtifactRegistry, ReceiptArtifact
@@ -294,10 +294,20 @@ class StewardAgent:
             self._step_state(state_path, AgentState.PLAN)
 
         final_answer = ""
+        docx_exported_ok = False
         max_steps = max(6, 4 + len(artifacts))
         for _step in range(max_steps):
+            turn_model = self.settings.slm_model if docx_exported_ok else routing_dec.model_id
+            turn_tier = ModelTier.FAST_SLM if docx_exported_ok else routing_dec.tier
+            turn_tools = None if docx_exported_ok else active_specs
             with self.tracer.span(trace_id, "llm", "complete") as sp:
-                comp = await self.llm.complete(messages, model_id=routing_dec.model_id, tier=routing_dec.tier, tools=active_specs)
+                comp = await self.llm.complete(
+                    messages,
+                    model_id=turn_model,
+                    tier=turn_tier,
+                    tools=turn_tools,
+                    escalated=routing_dec.escalated,
+                )
                 sp.model_id, sp.input_tokens, sp.output_tokens, sp.cached_input_tokens = (
                     comp.model_id, comp.input_tokens, comp.output_tokens, comp.cached_input_tokens
                 )
@@ -435,6 +445,10 @@ class StewardAgent:
                     totals[0] += v_in
                     totals[1] += v_out
                     all_exec.append(rec)
+                    if rec.tool_name == "export_reimbursement_docx" and rec.status == "ok":
+                        docx_exported_ok = True
+                    if rec.tool_name == "inspect_all_receipts" and '"tainted": true' in rec.output_json.lower():
+                        is_tainted = True
                     limit_chars = max(16000, self.settings.tool_output_max_chars * 6) if tc.tool_name == "inspect_all_receipts" else self.settings.tool_output_max_chars
                     messages.append({
                         "role": "tool",
@@ -465,7 +479,12 @@ class StewardAgent:
         self._step_state(state_path, AgentState.PERCEIVE)
         with self.tracer.span(trace_id, "perception", "parse_attachments") as sp:
             bundle = expand_attachments(attachments or [], self.settings.artifact_cache_dir / "bundles" / trace_id)
-            artifacts = [self.parser.parse_file(p) for p in bundle.financial_vouchers]
+            use_vlm_fastpath = (
+                not self.settings.use_mock_llm
+                and not isinstance(self.llm, MockLLMProvider)
+                and len(bundle.financial_vouchers) >= 2
+            )
+            artifacts = [self.parser.parse_file(p, defer_ocr=use_vlm_fastpath) for p in bundle.financial_vouchers]
             self.tools.set_session_bundle(
                 voucher_handles=[a.handle for a in artifacts],
                 activity_photos=bundle.selected_activity_photos,

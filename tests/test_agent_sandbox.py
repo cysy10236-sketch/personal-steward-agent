@@ -145,3 +145,25 @@ def test_archive_bundle_ingestor_separates_vouchers_docs_and_scene_photos(tmp_pa
     assert len(bundle.financial_vouchers) == 1 and bundle.financial_vouchers[0].name == "支付记录.jpg"
     assert len(bundle.context_docs) == 1 and "200 元" in bundle.context_brief
     assert len(bundle.activity_photos) == 5 and len(bundle.selected_activity_photos) == 4
+
+
+def test_export_docx_ast_row_identity_fail_fast(steward_agent: StewardAgent) -> None:
+    # Deterministic AST audit gate MUST reject LLM subtraction hallucination (100 - 20 != 90)
+    bad = steward_agent.tools.execute(
+        "export_reimbursement_docx",
+        {
+            "filename": "bad_math.docx",
+            "title": "算术幻觉拦截测试",
+            "items": [
+                {
+                    "date": "2026-05-23",
+                    "category": "餐饮",
+                    "merchant_or_desc": "测试商户",
+                    "gross_amount_cny": 100.0,
+                    "excluded_personal_cny": 20.0,
+                    "reimbursable_cny": 90.0,
+                }
+            ],
+        },
+    )
+    assert bad.status == "error" and "AST row arithmetic audit failed" in bad.output_json

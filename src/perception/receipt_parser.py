@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import json
 import math
 from pathlib import Path
 import re
@@ -77,18 +78,38 @@ class ReceiptMultimodalParser:
         raw = Path(path).read_bytes()
         return f"data:image/png;base64,{base64.b64encode(raw).decode('ascii')}"
 
-    def parse_file(self, file_path: str | Path) -> ReceiptArtifact:
+    def _ocr_cache_path(self, key: str) -> Path:
+        d = self.registry.cache_dir / "ocr_cache"
+        d.mkdir(parents=True, exist_ok=True)
+        return d / f"{key}.json"
+
+    def _run_cached_ocr(self, cache_key: str, pil_img: Image.Image) -> list[str]:
+        cp = self._ocr_cache_path(cache_key)
+        if cp.exists():
+            try:
+                return list(json.loads(cp.read_text(encoding="utf-8")))
+            except Exception:
+                pass
+        ocr_res, _ = _get_ocr()(np.asarray(pil_img), use_cls=False)
+        lines = [str(it[1]).strip() for it in (ocr_res or []) if str(it[1]).strip()]
+        try:
+            cp.write_text(json.dumps(lines, ensure_ascii=False), encoding="utf-8")
+        except Exception:
+            pass
+        return lines
+
+    def parse_file(self, file_path: str | Path, *, defer_ocr: bool = False) -> ReceiptArtifact:
         path = Path(file_path)
         if not path.exists():
             raise FileNotFoundError(f"Attachment not found: {path}")
         suffix = path.suffix.lower()
         if suffix == ".pdf":
-            return self.parse_pdf_receipt(path)
+            return self.parse_pdf_receipt(path, defer_ocr=defer_ocr)
         if suffix in {".png", ".jpg", ".jpeg", ".webp"}:
-            return self.parse_image_receipt(path)
+            return self.parse_image_receipt(path, defer_ocr=defer_ocr)
         raise ValueError(f"Unsupported receipt file type: {suffix!r}")
 
-    def parse_pdf_receipt(self, path: Path) -> ReceiptArtifact:
+    def parse_pdf_receipt(self, path: Path, *, defer_ocr: bool = False) -> ReceiptArtifact:
         sha = self.registry.file_sha256(path)
         art_id = f"rcpt_pdf_{sha[:8]}"
         cached = self.registry.get(art_id)
@@ -96,6 +117,7 @@ class ReceiptMultimodalParser:
             return cached
 
         doc = fitz.open(path)
+        scanned_pages: list[int] = []
         try:
             page_count = len(doc)
             rois: list[ReceiptROI] = []
@@ -109,27 +131,40 @@ class ReceiptMultimodalParser:
                     w0, h0 = pw, ph
                 p_txt = page.get_text("text").strip()
                 if len(p_txt) < 20:
-                    # Scanned / image-only PDF page fallback: render at 135 DPI (capped 1280px) and run local ONNX RapidOCR
-                    pix = page.get_pixmap(dpi=135, alpha=False)
-                    pil_page = Image.frombytes("RGB", (pix.width, pix.height), pix.samples)
-                    if max(pil_page.size) > 1280:
-                        pil_page.thumbnail((1280, 1280), Image.Resampling.LANCZOS)
-                    ocr_res, _ = _get_ocr()(np.asarray(pil_page))
-                    ocr_lines = [str(it[1]).strip() for it in (ocr_res or []) if str(it[1]).strip()]
-                    if ocr_lines:
-                        p_txt = "\n".join(ocr_lines)
+                    scanned_pages.append(p_idx)
+                    if defer_ocr:
+                        # Defer heavy CPU OCR to parallel native VLM inside inspect_all_receipts
                         rois.append(
                             ReceiptROI(
                                 roi_id=f"roi_{roi_seq}",
                                 page_index=p_idx,
                                 norm_box=(0.0, 0.0, 1.0, 1.0),
                                 region_type="invoice_widget",
-                                label=f"p{p_idx + 1}_scanned_pdf_ocr",
-                                extracted_text=p_txt,
-                                line_items=_parse_ocr_line_items(ocr_lines),
+                                label=f"p{p_idx + 1}_scanned_vlm_pending",
+                                extracted_text="",
                             )
                         )
                         roi_seq += 1
+                    else:
+                        pix = page.get_pixmap(dpi=135, alpha=False)
+                        pil_page = Image.frombytes("RGB", (pix.width, pix.height), pix.samples)
+                        if max(pil_page.size) > 1280:
+                            pil_page.thumbnail((1280, 1280), Image.Resampling.LANCZOS)
+                        ocr_lines = self._run_cached_ocr(f"{sha[:16]}_p{p_idx}", pil_page)
+                        if ocr_lines:
+                            p_txt = "\n".join(ocr_lines)
+                            rois.append(
+                                ReceiptROI(
+                                    roi_id=f"roi_{roi_seq}",
+                                    page_index=p_idx,
+                                    norm_box=(0.0, 0.0, 1.0, 1.0),
+                                    region_type="invoice_widget",
+                                    label=f"p{p_idx + 1}_scanned_pdf_ocr",
+                                    extracted_text=p_txt,
+                                    line_items=_parse_ocr_line_items(ocr_lines),
+                                )
+                            )
+                            roi_seq += 1
                 page_texts.append(f"[Page {p_idx + 1}]\n{p_txt}")
 
                 tabs = page.find_tables()
@@ -220,12 +255,17 @@ class ReceiptMultimodalParser:
                 rois=rois,
                 compact_header=header,
                 raw_full_text=full_text,
-                structured_kv={"pages": page_count, "filename": path.name},
+                structured_kv={
+                    "pages": page_count,
+                    "filename": path.name,
+                    "scanned_pages": scanned_pages,
+                    "ocr_deferred_for_vlm": bool(defer_ocr and scanned_pages),
+                },
             )
         )
 
-    def parse_image_receipt(self, path: Path) -> ReceiptArtifact:
-        """Pure pixel perception via ONNX RapidOCR (zero PNG metadata shortcuts)."""
+    def parse_image_receipt(self, path: Path, *, defer_ocr: bool = False) -> ReceiptArtifact:
+        """Pure pixel perception via ONNX RapidOCR (or fast-path defer to parallel live VLM)."""
         sha = self.registry.file_sha256(path)
         art_id = f"rcpt_img_{sha[:8]}"
         cached = self.registry.get(art_id)
@@ -234,6 +274,35 @@ class ReceiptMultimodalParser:
 
         rgb = ImageOps.exif_transpose(Image.open(path)).convert("RGB")
         w, h = rgb.size
+        if defer_ocr:
+            roi = ReceiptROI(
+                roi_id="roi_1",
+                page_index=0,
+                norm_box=(0.0, 0.0, 1.0, 1.0),
+                region_type="invoice_widget",
+                label="image_vlm_fastpath",
+                extracted_text="",
+            )
+            header = f"Image Receipt '{path.name}' ({w}x{h}, vlm_fastpath=true) | tainted=False | rois=[roi_1(image_vlm_fastpath)]"
+            return self.registry.register(
+                ReceiptArtifact(
+                    artifact_id=art_id,
+                    handle=f"artifact://{art_id}",
+                    modality="image",
+                    source_path=str(path.resolve()),
+                    sha256=sha,
+                    width=w,
+                    height=h,
+                    page_count=1,
+                    is_tainted_untrusted=False,
+                    taint_reasons=[],
+                    rois=[roi],
+                    compact_header=header,
+                    raw_full_text="",
+                    structured_kv={"size": f"{w}x{h}", "ocr_deferred_for_vlm": True},
+                )
+            )
+
         # Downscale oversized phone screenshots only for RapidOCR speed (keep original full-res file on disk)
         ocr_img = rgb
         scale_x, scale_y = 1.0, 1.0
@@ -243,7 +312,7 @@ class ReceiptMultimodalParser:
             scale_x, scale_y = w / max(1, ocr_img.width), h / max(1, ocr_img.height)
         np_img = np.asarray(ocr_img)
 
-        ocr_res, _ = _get_ocr()(np_img)
+        ocr_res, _ = _get_ocr()(np_img, use_cls=False)
         rois: list[ReceiptROI] = []
         ocr_lines: list[str] = []
         xs: list[float] = []

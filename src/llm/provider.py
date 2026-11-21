@@ -162,9 +162,9 @@ class OpenAICompatibleProvider:
         prompt: str,
     ) -> tuple[str, int, int]:
         """Call native Vision VLM (VLM_MODEL) on cropped ROI PNG pixels to cross-verify OCR."""
-        resp = await self._cloud_client.chat.completions.create(
-            model=self.settings.vlm_model,
-            messages=[
+        vlm_kwargs: dict[str, Any] = {
+            "model": self.settings.vlm_model,
+            "messages": [
                 {
                     "role": "user",
                     "content": [
@@ -173,8 +173,12 @@ class OpenAICompatibleProvider:
                     ],
                 }
             ],
-            temperature=0.0,
-        )
+            "temperature": 0.0,
+            "max_tokens": 512,
+        }
+        if "deepseek" in self.settings.vlm_model.lower():
+            vlm_kwargs["reasoning_effort"] = "low"
+        resp = await self._cloud_client.chat.completions.create(**vlm_kwargs)
         txt = (resp.choices[0].message.content or "").strip()
         u = resp.usage
         return txt, (int(u.prompt_tokens) if u else 0), (int(u.completion_tokens) if u else 0)

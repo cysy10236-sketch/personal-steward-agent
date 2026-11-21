@@ -287,11 +287,22 @@ def create_app(*, force_mock: bool = False) -> FastAPI:
                 saved_paths.append(dest)
 
         want_docx = export_docx.lower() in {"true", "1", "yes", "on"}
-        meta_ctx = f"报销人：{applicant or '团队带队人'}；归属项目：{project_code or 'PRJ-PANGU-2'}。"
+        meta_parts: list[str] = []
+        if applicant.strip():
+            meta_parts.append(f"报销人：{applicant.strip()}")
+        if project_code.strip():
+            meta_parts.append(f"归属项目：{project_code.strip()}")
+        meta_ctx = (
+            ("；".join(meta_parts) + "（若伴随策划书或发票中有更准确的主体/统筹人/出行人信息，请优先采用并补充完整）。")
+            if meta_parts
+            else "报销人、活动/项目名称、预算上限及人员名单请自动从上传的策划书/表格/发票中提取。"
+        )
         export_hint = (
-            f"请将每张上传凭证均通过 inspect_all_receipts 核验、用 eval_expense_math 精确汇总后，"
-            f"调用 export_reimbursement_docx 生成报销单（文件名 reimbursement_{batch_id}.docx），"
-            f"并在每条费用项中准确填写对应的 artifact_handle 以便嵌入原始票据照片；若发现同日同额重复票据请明确标注并在 extra_warnings 说明。"
+            f"请将全部上传财务凭证通过 inspect_all_receipts 一次批量核验、用 eval_expense_math 精确汇总后，"
+            f"调用 export_reimbursement_docx 生成报销单（文件名 reimbursement_{batch_id}.docx）："
+            f"同一笔支出的“发票+小票/行程单+支付截图”请归并为一条明细并通过 artifact_handle + supporting_handles 关联避免重复计费；"
+            f"如有策划书预算、发票核对台账、人员名单或活动现场照片，请一并填充 budget_cap_cny、extra_sections 与 activity_photo_captions；"
+            f"如有疑似重复报销、凭证缺口或品名差异请在 extra_warnings 注明。"
             if want_docx
             else ""
         )

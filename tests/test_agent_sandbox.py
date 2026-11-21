@@ -114,3 +114,34 @@ async def test_batch_receipt_docx_export_and_duplicate_detection(
     doc = Document(str(docx_path))
     assert len(doc.tables) >= 3  # metadata grid + warning/ok callout + expense summary table
     assert len(doc.inline_shapes) == 4  # all 4 pure-pixel receipt images embedded!
+
+
+def test_archive_bundle_ingestor_separates_vouchers_docs_and_scene_photos(tmp_path: Path) -> None:
+    import zipfile
+    from docx import Document
+    from PIL import Image
+    from src.perception.bundle_ingestor import expand_attachments
+
+    src_dir = tmp_path / "raw_bundle"
+    (src_dir / "活动图片").mkdir(parents=True)
+    (src_dir / "发票与支付").mkdir(parents=True)
+
+    # Create a tiny proposal .docx, 5 scene photos, and 1 voucher image inside a .zip
+    prop = Document()
+    prop.add_paragraph("每期活动预算上限 200 元，用于教学文具与交通。")
+    prop.save(str(src_dir / "活动策划书.docx"))
+
+    for i in range(1, 6):
+        Image.new("RGB", (1200, 900), (200, 210, 220)).save(src_dir / "活动图片" / f"{i}.jpg")
+    Image.new("RGB", (600, 900), (255, 255, 255)).save(src_dir / "发票与支付" / "支付记录.jpg")
+
+    arc_path = tmp_path / "reimburse_bundle.zip"
+    with zipfile.ZipFile(arc_path, "w") as zf:
+        for fp in src_dir.rglob("*"):
+            if fp.is_file():
+                zf.write(fp, fp.relative_to(src_dir))
+
+    bundle = expand_attachments([arc_path], tmp_path / "extracted")
+    assert len(bundle.financial_vouchers) == 1 and bundle.financial_vouchers[0].name == "支付记录.jpg"
+    assert len(bundle.context_docs) == 1 and "200 元" in bundle.context_brief
+    assert len(bundle.activity_photos) == 5 and len(bundle.selected_activity_photos) == 4

@@ -109,9 +109,11 @@ class ReceiptMultimodalParser:
                     w0, h0 = pw, ph
                 p_txt = page.get_text("text").strip()
                 if len(p_txt) < 20:
-                    # Scanned / image-only PDF page fallback: render at 180 DPI and run local ONNX RapidOCR
-                    pix = page.get_pixmap(dpi=180, alpha=False)
+                    # Scanned / image-only PDF page fallback: render at 135 DPI (capped 1280px) and run local ONNX RapidOCR
+                    pix = page.get_pixmap(dpi=135, alpha=False)
                     pil_page = Image.frombytes("RGB", (pix.width, pix.height), pix.samples)
+                    if max(pil_page.size) > 1280:
+                        pil_page.thumbnail((1280, 1280), Image.Resampling.LANCZOS)
                     ocr_res, _ = _get_ocr()(np.asarray(pil_page))
                     ocr_lines = [str(it[1]).strip() for it in (ocr_res or []) if str(it[1]).strip()]
                     if ocr_lines:
@@ -232,7 +234,14 @@ class ReceiptMultimodalParser:
 
         rgb = ImageOps.exif_transpose(Image.open(path)).convert("RGB")
         w, h = rgb.size
-        np_img = np.asarray(rgb)
+        # Downscale oversized phone screenshots only for RapidOCR speed (keep original full-res file on disk)
+        ocr_img = rgb
+        scale_x, scale_y = 1.0, 1.0
+        if max(w, h) > 1200:
+            ocr_img = rgb.copy()
+            ocr_img.thumbnail((1200, 1200), Image.Resampling.LANCZOS)
+            scale_x, scale_y = w / max(1, ocr_img.width), h / max(1, ocr_img.height)
+        np_img = np.asarray(ocr_img)
 
         ocr_res, _ = _get_ocr()(np_img)
         rois: list[ReceiptROI] = []
@@ -248,8 +257,8 @@ class ReceiptMultimodalParser:
             ocr_lines.append(txt)
             confs.append(conf)
             for pt in quad:
-                xs.append(float(pt[0]))
-                ys.append(float(pt[1]))
+                xs.append(float(pt[0]) * scale_x)
+                ys.append(float(pt[1]) * scale_y)
 
         if ocr_lines:
             x0, x1 = max(0.0, min(xs) - 12.0), min(float(w), max(xs) + 12.0)

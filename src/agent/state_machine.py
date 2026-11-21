@@ -21,7 +21,8 @@ from ..llm.provider import LLMProviderProtocol, ToolCallRequest
 from ..memory.steward_memory import MemorySearchResult, StewardMemoryEngine
 from ..observability.tracer import StructuredTracer, new_trace_id
 from ..perception.artifact_registry import ArtifactRegistry, ReceiptArtifact
-from ..perception.receipt_parser import ReceiptMultimodalParser, _get_ocr
+from ..perception.bundle_ingestor import expand_attachments
+from ..perception.receipt_parser import ReceiptMultimodalParser, _get_ocr, detect_prompt_injection
 from ..router.steward_router import (
     ModelTier,
     PairedMcpToolSelector,
@@ -434,7 +435,7 @@ class StewardAgent:
                     totals[0] += v_in
                     totals[1] += v_out
                     all_exec.append(rec)
-                    limit_chars = self.settings.tool_output_max_chars * 3 if tc.tool_name == "inspect_all_receipts" else self.settings.tool_output_max_chars
+                    limit_chars = max(16000, self.settings.tool_output_max_chars * 6) if tc.tool_name == "inspect_all_receipts" else self.settings.tool_output_max_chars
                     messages.append({
                         "role": "tool",
                         "tool_call_id": tc.call_id,
@@ -463,9 +464,22 @@ class StewardAgent:
 
         self._step_state(state_path, AgentState.PERCEIVE)
         with self.tracer.span(trace_id, "perception", "parse_attachments") as sp:
-            artifacts = [self.parser.parse_file(p) for p in (attachments or [])]
-            is_tainted = any(a.is_tainted_untrusted for a in artifacts)
-            sp.metadata = {"attachments": len(artifacts), "is_tainted": is_tainted}
+            bundle = expand_attachments(attachments or [], self.settings.artifact_cache_dir / "bundles" / trace_id)
+            artifacts = [self.parser.parse_file(p) for p in bundle.financial_vouchers]
+            self.tools.set_session_bundle(
+                voucher_handles=[a.handle for a in artifacts],
+                activity_photos=bundle.selected_activity_photos,
+                total_activity_photo_count=len(bundle.activity_photos),
+            )
+            is_tainted = any(a.is_tainted_untrusted for a in artifacts) or bool(
+                bundle.context_brief and detect_prompt_injection(bundle.context_brief)
+            )
+            sp.metadata = {
+                "attachments": len(artifacts),
+                "context_docs": len(bundle.context_docs),
+                "activity_photos": len(bundle.activity_photos),
+                "is_tainted": is_tainted,
+            }
 
         self._step_state(state_path, AgentState.RETRIEVE_MEMORY)
         with self.tracer.span(trace_id, "memory", "hybrid_search") as sp:
@@ -498,6 +512,7 @@ class StewardAgent:
                 memory_hits=mem_res.hits,
                 abstained=mem_res.abstained,
                 artifacts=artifacts,
+                context_brief=bundle.context_brief,
                 pii_checks=redaction.local_checks if routing_dec.redacted_for_cloud else None,
                 auditor_feedback=auditor_feedback,
             )

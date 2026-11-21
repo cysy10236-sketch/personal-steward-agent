@@ -446,11 +446,13 @@ def build_reimbursement_docx(
         h_sec = doc.add_paragraph()
         h_sec.paragraph_format.space_before = Pt(11)
         h_sec.paragraph_format.space_after = Pt(5)
+        h_sec.paragraph_format.keep_with_next = True
         prefix = cn_nums[sec_num - 1] if sec_num - 1 < len(cn_nums) else str(sec_num)
         _style_run(h_sec.add_run(f"{prefix}、{sec_spec['heading']}"), size_pt=11.5, bold=True, color=(15, 23, 42))
         if sec_spec.get("note"):
             pn = doc.add_paragraph()
             pn.paragraph_format.space_after = Pt(4)
+            pn.paragraph_format.keep_with_next = True
             _style_run(pn.add_run(sec_spec["note"]), size_pt=8.6, color=(71, 85, 105))
         _add_styled_table(
             doc,

@@ -646,12 +646,12 @@
         </div>
 
         <div class="dropzone" id="dropzone">
-          <input type="file" id="fileInput" multiple accept=".png,.jpg,.jpeg,.webp,.pdf" class="hidden" />
+          <input type="file" id="fileInput" multiple accept=".png,.jpg,.jpeg,.webp,.pdf,.rar,.zip,.docx,.xlsx" class="hidden" />
           <div class="dropzone-icon">
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
           </div>
-          <div class="dropzone-title">拖拽或点击选择多张截图 / 照片 / PDF</div>
-          <div class="dropzone-sub">支持微信支付、支付宝账单、纸质小票拍照与酒店水单</div>
+          <div class="dropzone-title">拖拽或点击上传截图 / PDF / 整个 .rar .zip 报销压缩包</div>
+          <div class="dropzone-sub">自动解包并分离发票、小票、支付截图、策划书(.docx)、名单(.xlsx)与活动现场照</div>
         </div>
 
         <div class="thumb-grid hidden" id="thumbGrid"></div>
@@ -660,17 +660,17 @@
 
         <div class="field">
           <label for="queryInput">报销事由与核验指令</label>
-          <textarea id="queryInput">请批量核验我本次带队出门上传的全部支付截图与小票照片，识别每笔时间、商户、用途、支付渠道与金额，剔除个人自费项并检查是否存在重复票据，用精确算术工具汇总总额后，生成一份带汇总表和票据照片附件的 Word (.docx) 报销明细单。</textarea>
+          <textarea id="queryInput">请批量核验本次上传的全部报销材料（含发票、小票/行程单、支付截图及伴随策划书/名单），完成三单合一核对、剔除个人自费或重复票据，用精确算术工具汇总总额后，生成一份带明细汇总表、核对台账与原始票据/活动照片附件的 Word (.docx) 报销明细单。</textarea>
         </div>
 
         <div class="row-2">
           <div class="field">
-            <label for="applicantInput">报销人 / 带队人</label>
-            <input id="applicantInput" type="text" value="张熠（带队负责人）" />
+            <label for="applicantInput">报销人 / 统筹人（可选）</label>
+            <input id="applicantInput" type="text" placeholder="留空则自动从材料提取" />
           </div>
           <div class="field">
-            <label for="projectInput">归属项目代码</label>
-            <input id="projectInput" type="text" value="PRJ-PANGU-2" />
+            <label for="projectInput">归属项目 / 活动（可选）</label>
+            <input id="projectInput" type="text" placeholder="留空则自动从材料提取" />
           </div>
         </div>
 
@@ -838,9 +838,13 @@
       state.files.forEach((f, idx) => {
         const card = document.createElement("div");
         card.className = "thumb-card";
-        const isPdf = f.name.toLowerCase().endsWith(".pdf");
-        if (isPdf) {
-          card.innerHTML = `<div class="thumb-pdf">PDF 水单</div>`;
+        const low = f.name.toLowerCase();
+        if (low.endsWith(".pdf")) {
+          card.innerHTML = `<div class="thumb-pdf">PDF 凭证</div>`;
+        } else if (low.endsWith(".rar") || low.endsWith(".zip")) {
+          card.innerHTML = `<div class="thumb-pdf" style="color:#0071e3;background:#eff6ff">${low.endsWith(".rar") ? "RAR" : "ZIP"} 归档包</div>`;
+        } else if (low.endsWith(".docx") || low.endsWith(".xlsx")) {
+          card.innerHTML = `<div class="thumb-pdf" style="color:#15803d;background:#f0fdf4">${low.endsWith(".docx") ? "WORD 策划" : "EXCEL 表格"}</div>`;
         } else {
           const img = document.createElement("img");
           img.className = "thumb-img";

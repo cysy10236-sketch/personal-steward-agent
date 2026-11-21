@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import base64
+import io
 import json
 import os
 from pathlib import Path
@@ -10,6 +12,7 @@ import shlex
 import subprocess
 from typing import Any, Callable
 
+from PIL import Image, ImageOps
 from pydantic import BaseModel, Field, ValidationError
 
 from ..llm.provider import LLMProviderProtocol
@@ -46,14 +49,27 @@ class _ExportClaimArgs(BaseModel):
     markdown_body: str = Field(min_length=5, description="Markdown content of the reimbursement claim")
 
 
+class _DocxTableSection(BaseModel):
+    heading: str = Field(description="Section title, e.g. '三单合一发票与交易凭证核对台账' or '参与人员名单'")
+    note: str = Field(default="", description="Brief explanatory note above the table")
+    headers: list[str] = Field(min_length=2, description="Table column headers")
+    rows: list[list[str]] = Field(min_length=1, description="Table data rows")
+    right_align_cols: list[int] = Field(default_factory=list, description="0-based numeric column indices to right-align")
+
+
 class _ExportDocxArgs(BaseModel):
     filename: str = Field(default="reimbursement_report.docx", description="Output Word filename ending in .docx")
-    title: str = Field(min_length=2, description="Document title, e.g. 2026年11月带队出差报销明细单")
-    applicant: str = Field(default="报销人", description="Applicant or team leader name")
-    project_code: str = Field(default="GENERAL", description="Associated project code")
-    trip_summary: str = Field(default="", description="Brief trip purpose and dates summary")
-    items: list[ExpenseLineItem] = Field(min_length=1, description="Verified itemized expenses with artifact_handle for each photo")
-    extra_warnings: list[str] = Field(default_factory=list, description="Optional policy or audit warnings")
+    kicker_text: str = Field(default="TRIPLEDGER STEWARD · 智能差旅报销核验单", description="Top institution/department kicker banner")
+    title: str = Field(min_length=2, description="Document title, e.g. 第十七期“一院一社区”志愿授课实践活动报销明细单")
+    applicant: str = Field(default="报销人", description="Applicant, coordinator, or traveler name and contact")
+    project_code: str = Field(default="GENERAL", description="Associated project, event, or department name")
+    trip_summary: str = Field(default="", description="Concise event/trip date, location, topic, and organizer summary")
+    budget_cap_cny: float | None = Field(default=None, ge=0.0, description="Optional budget ceiling in CNY extracted from proposal/policy")
+    items: list[ExpenseLineItem] = Field(min_length=1, description="Verified itemized expenses; use supporting_handles for tri-voucher proofs of the same purchase")
+    extra_sections: list[_DocxTableSection] = Field(default_factory=list, description="Optional structured tables (e.g., invoice reconciliation ledger, participant/volunteer roster)")
+    extra_warnings: list[str] = Field(default_factory=list, description="Audit warnings, screenshot compliance reminders, or missing-receipt notes")
+    include_activity_photos: bool = Field(default=True, description="Embed selected event/activity supporting photos in a 2x2 grid if available")
+    activity_photo_captions: list[str] = Field(default_factory=list, description="Concise grounded Chinese captions matching the selected activity photos")
 
 
 class _ReadClaimArgs(BaseModel):
@@ -84,7 +100,23 @@ class StewardToolRegistry:
 
         self._local_specs: dict[str, ToolSchemaSpec] = {}
         self._local_handlers: dict[str, tuple[type[BaseModel], Callable[[Any], dict[str, Any]]]] = {}
+        self._session_voucher_handles: list[str] = []
+        self._session_activity_photos: list[Path] = []
+        self._session_activity_total: int = 0
+        self._session_photo_vlm_captions: dict[str, str] = {}
         self._register_local()
+
+    def set_session_bundle(
+        self,
+        *,
+        voucher_handles: list[str],
+        activity_photos: list[Path] | None = None,
+        total_activity_photo_count: int = 0,
+    ) -> None:
+        self._session_voucher_handles = list(voucher_handles)
+        self._session_activity_photos = list(activity_photos or [])
+        self._session_activity_total = total_activity_photo_count
+        self._session_photo_vlm_captions = {}
 
     def close(self) -> None:
         if self._owns_mcp:
@@ -282,23 +314,48 @@ class StewardToolRegistry:
         elif tool_name == "inspect_all_receipts":
             payload = json.loads(rec.output_json)
             receipts = payload.get("receipts", [])
-            img_tasks: list[tuple[int, Any]] = []
+            img_tasks: list[tuple[str, int, Any]] = []
             for idx, item in enumerate(receipts):
                 art = self.artifact_registry.get(str(item.get("handle", "")))
                 if art is not None and art.modality == "image":
-                    crop = self.artifact_registry.inspect_roi(art.handle, roi_id="roi_1" if art.rois else None)
-                    img_tasks.append((idx, llm.inspect_image_crop(crop.base64_png, prompt=vlm_prompt)))
+                    pil = ImageOps.exif_transpose(Image.open(art.source_path)).convert("RGB")
+                    pil.thumbnail((1024, 1024), Image.Resampling.LANCZOS)
+                    buf = io.BytesIO()
+                    pil.save(buf, format="PNG", optimize=True)
+                    b64 = base64.b64encode(buf.getvalue()).decode("ascii")
+                    img_tasks.append(("receipt", idx, llm.inspect_image_crop(b64, prompt=vlm_prompt)))
+
+            photo_prompt = "用一句简洁客观的中文（15-28字）描述这张活动现场照片的核心画面内容（例如授课主题PPT、课堂互动、全体合影等），不要臆造文字。"
+            activity_previews: list[dict[str, str]] = []
+            for p_idx, p_path in enumerate(self._session_activity_photos):
+                activity_previews.append({"index": str(p_idx + 1), "filename": p_path.name, "vlm_caption": ""})
+                if p_path.exists():
+                    pil = ImageOps.exif_transpose(Image.open(p_path)).convert("RGB")
+                    pil.thumbnail((640, 640), Image.Resampling.LANCZOS)
+                    buf = io.BytesIO()
+                    pil.save(buf, format="PNG", optimize=True)
+                    b64 = base64.b64encode(buf.getvalue()).decode("ascii")
+                    img_tasks.append(("photo", p_idx, llm.inspect_image_crop(b64, prompt=photo_prompt)))
+
             if img_tasks:
-                results = await asyncio.gather(*(coro for _, coro in img_tasks), return_exceptions=True)
-                for (idx, _), res in zip(img_tasks, results):
+                results = await asyncio.gather(*(coro for _, _, coro in img_tasks), return_exceptions=True)
+                for (kind, idx, _), res in zip(img_tasks, results):
                     if isinstance(res, Exception):
-                        receipts[idx]["vlm_error"] = f"{type(res).__name__}: {res}"
+                        if kind == "receipt":
+                            receipts[idx]["vlm_error"] = f"{type(res).__name__}: {res}"
                     else:
                         vtxt, vi, vo = res
-                        receipts[idx]["vlm_pixel_verification"] = vtxt
                         vlm_in += vi
                         vlm_out += vo
+                        if kind == "receipt":
+                            receipts[idx]["vlm_pixel_verification"] = vtxt
+                        else:
+                            clean_cap = vtxt.strip().replace("\n", " ")[:60]
+                            activity_previews[idx]["vlm_caption"] = clean_cap
+                            self._session_photo_vlm_captions[self._session_activity_photos[idx].name] = clean_cap
                 payload["receipts"] = receipts
+                if activity_previews:
+                    payload["activity_photos_preview"] = activity_previews
                 rec = ToolExecutionRecord(tool_name=rec.tool_name, arguments=rec.arguments, status=rec.status, output_json=json.dumps(payload, ensure_ascii=False))
 
         return rec, vlm_in, vlm_out
@@ -346,8 +403,25 @@ class StewardToolRegistry:
         # Re-verify total arithmetically via ASTExpenseCalculator
         expr = " + ".join(str(i.reimbursable_cny) for i in args.items) if args.items else "0"
         ast_sum = ASTExpenseCalculator.evaluate(expr)
+
+        act_pairs: list[tuple[Path, str]] | None = None
+        act_note = ""
+        if args.include_activity_photos and self._session_activity_photos:
+            act_pairs = []
+            for idx, p_path in enumerate(self._session_activity_photos):
+                cap = (
+                    args.activity_photo_captions[idx].strip()
+                    if idx < len(args.activity_photo_captions) and args.activity_photo_captions[idx].strip()
+                    else self._session_photo_vlm_captions.get(p_path.name, f"活动现场照片（{p_path.name}）")
+                )
+                act_pairs.append((p_path, f"照片 {idx + 1}｜{cap}"))
+            act_note = (
+                f"以下精选 {len(act_pairs)} 张现场佐证照片（原始归档共含 {self._session_activity_total} 张活动照片可供备查）。"
+            )
+
         res = build_reimbursement_docx(
             output_path=target,
+            kicker_text=args.kicker_text,
             title=args.title,
             applicant=args.applicant,
             project_code=args.project_code,
@@ -355,6 +429,11 @@ class StewardToolRegistry:
             items=args.items,
             artifact_registry=self.artifact_registry,
             extra_warnings=args.extra_warnings,
+            include_all_registered_handles=self._session_voucher_handles,
+            budget_cap_cny=args.budget_cap_cny,
+            extra_sections=[s.model_dump() for s in args.extra_sections] if args.extra_sections else None,
+            activity_photos=act_pairs,
+            activity_photo_note=act_note,
         )
         return {
             "status": "ok",

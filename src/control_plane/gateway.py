@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+from collections import deque
 import hashlib
 import hmac
 import json
+from pathlib import Path
 import time
 from typing import Any
 import uuid
@@ -233,11 +235,15 @@ class ToolExecutionGateway:
         control_plane: AgentControlPlane,
         registry: StewardToolRegistry,
         sandbox: ExpenseSandboxGuard,
+        audit_log_path: Path | str | None = None,
     ) -> None:
         self.control_plane = control_plane
         self.registry = registry
         self.sandbox = sandbox
-        self.audit_log: list[GatewayAuditEvent] = []
+        self.audit_log_path = Path(audit_log_path) if audit_log_path else None
+        if self.audit_log_path is not None:
+            self.audit_log_path.parent.mkdir(parents=True, exist_ok=True)
+        self.audit_log: deque[GatewayAuditEvent] = deque(maxlen=256)
         self._run_call_counts: dict[str, int] = {}
 
     def _record_audit(
@@ -250,22 +256,24 @@ class ToolExecutionGateway:
         schema_sha256: str,
         decision: SandboxDecision,
     ) -> None:
-        self.audit_log.append(
-            GatewayAuditEvent(
-                event_id=f"gw_{uuid.uuid4().hex[:10]}",
-                timestamp=time.time(),
-                run_id=run_id,
-                principal_id=token.principal_id,
-                actor_agent_id=token.actor_agent_id,
-                delegated_by=token.delegated_by,
-                tool_name=tool_name,
-                tool_namespace=tool_namespace,
-                schema_sha256=schema_sha256,
-                verdict=decision.verdict.value,
-                rule_id=decision.rule_id,
-                reason=decision.reason,
-            )
+        ev = GatewayAuditEvent(
+            event_id=f"gw_{uuid.uuid4().hex[:10]}",
+            timestamp=time.time(),
+            run_id=run_id,
+            principal_id=token.principal_id,
+            actor_agent_id=token.actor_agent_id,
+            delegated_by=token.delegated_by,
+            tool_name=tool_name,
+            tool_namespace=tool_namespace,
+            schema_sha256=schema_sha256,
+            verdict=decision.verdict.value,
+            rule_id=decision.rule_id,
+            reason=decision.reason,
         )
+        self.audit_log.append(ev)
+        if self.audit_log_path is not None:
+            with self.audit_log_path.open("a", encoding="utf-8") as fh:
+                fh.write(ev.model_dump_json() + "\n")
 
     def authorize(
         self,
@@ -341,8 +349,20 @@ class ToolExecutionGateway:
             is_tainted_context=is_tainted_context,
             approval_token=approval_token,
         )
+        if dec.verdict == SandboxVerdict.ALLOW:
+            self._run_call_counts[run_id] = cnt + 1
         self._record_audit(run_id=run_id, token=token, tool_name=tool_name, tool_namespace=ns, schema_sha256=schema_hash, decision=dec)
         return dec
+
+    async def dispatch_approved(
+        self,
+        tool_name: str,
+        arguments: dict[str, Any],
+        *,
+        llm: LLMProviderProtocol | None = None,
+    ) -> tuple[ToolExecutionRecord, int, int]:
+        """Execute a tool call that has already passed Gateway.authorize()."""
+        return await self.registry.execute_async(tool_name, arguments, llm=llm)
 
     async def execute_authorized(
         self,
@@ -366,6 +386,5 @@ class ToolExecutionGateway:
         )
         if dec.verdict != SandboxVerdict.ALLOW:
             return dec, None, 0, 0
-        self._run_call_counts[run_id] = self._run_call_counts.get(run_id, 0) + 1
-        rec, v_in, v_out = await self.registry.execute_async(tool_name, arguments, llm=llm)
+        rec, v_in, v_out = await self.dispatch_approved(tool_name, arguments, llm=llm)
         return dec, rec, v_in, v_out

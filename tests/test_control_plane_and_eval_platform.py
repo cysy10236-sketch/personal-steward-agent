@@ -88,9 +88,49 @@ async def test_control_plane_attenuated_delegation_and_gateway_isolation(
     dec_exp = gw.authorize(expired, "eval_expense_math", {"expression": "1+1"}, run_id="run_exp")
     assert dec_exp.verdict == SandboxVerdict.DENY and dec_exp.rule_id == "CP_INVALID_TOKEN"
 
-    # 5. Gateway audit log captures full delegation lineage
+    # 5. Gateway audit log captures full delegation lineage AND persists to gateway_audit.jsonl
     denied_events = [e for e in gw.audit_log if e.run_id == "run_hijack" and e.verdict == "deny"]
     assert len(denied_events) == 2 and all(e.delegated_by == "steward.primary" for e in denied_events)
+    assert gw.audit_log_path is not None and gw.audit_log_path.exists()
+    assert "CP_SCOPE_DENIED" in gw.audit_log_path.read_text(encoding="utf-8")
+
+    # 6. Per-run tool call quota enforcement (max_tool_calls_per_run = 8 for compliance_auditor)
+    for _ in range(8):
+        d_ok = gw.authorize(auditor_tok, "eval_expense_math", {"expression": "1+1"}, run_id="run_quota_test")
+        assert d_ok.verdict == SandboxVerdict.ALLOW
+    d_over = gw.authorize(auditor_tok, "eval_expense_math", {"expression": "1+1"}, run_id="run_quota_test")
+    assert d_over.verdict == SandboxVerdict.DENY and d_over.rule_id == "CP_QUOTA_EXCEEDED"
+
+
+@pytest.mark.asyncio
+async def test_concurrent_contextvar_session_isolation_and_auto_maker_checker(
+    steward_agent: StewardAgent,
+    tmp_path: Path,
+) -> None:
+    import asyncio
+    import json
+    from main import ensure_sample_receipt_pack
+
+    # 1. Concurrent requests MUST NOT leak voucher handles across asyncio tasks
+    async def _worker(tag: str, delay: float) -> list[str]:
+        steward_agent.tools.set_session_bundle(voucher_handles=[f"artifact://{tag}"])
+        await asyncio.sleep(delay)
+        return steward_agent.tools._current_bundle().voucher_handles
+
+    res_a, res_b = await asyncio.gather(_worker("user_A", 0.05), _worker("user_B", 0.01))
+    assert res_a == ["artifact://user_A"] and res_b == ["artifact://user_B"]
+
+    # 2. Word export in StewardAgent.run() MUST automatically execute Maker-Checker delegated audit
+    samples = ensure_sample_receipt_pack(tmp_path / "mc_samples")
+    res = await steward_agent.run(
+        "请批量核验本次上传票据并生成 Word (.docx) 报销单 mc_audit.docx。",
+        attachments=samples,
+    )
+    docx_recs = [t for t in res.executed_tools if t.tool_name == "export_reimbursement_docx" and t.status == "ok"]
+    assert len(docx_recs) == 1
+    out = json.loads(docx_recs[0].output_json)
+    assert out["delegated_compliance_audit"]["verdict"] == "PASS"
+    assert out["delegated_compliance_audit"]["delegated_by"] == "steward.primary"
 
 
 def test_eval_platform_release_gate_and_pii_safe_bad_case_flywheel(tmp_path: Path) -> None:

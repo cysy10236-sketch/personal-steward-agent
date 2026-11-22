@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import asyncio
 import base64
+from contextvars import ContextVar
+from dataclasses import dataclass, field
 import hashlib
 import io
 import json
@@ -83,6 +85,17 @@ class _GuardedShellArgs(BaseModel):
     command: str = Field(description="Read-only workspace diagnostic command (ls, pwd, wc, head, sha256sum)")
 
 
+@dataclass
+class _SessionBundleState:
+    voucher_handles: list[str] = field(default_factory=list)
+    activity_photos: list[Path] = field(default_factory=list)
+    activity_total: int = 0
+    photo_vlm_captions: dict[str, str] = field(default_factory=dict)
+
+
+_SESSION_BUNDLE_CTX: ContextVar[_SessionBundleState | None] = ContextVar("_steward_session_bundle", default=None)
+
+
 class StewardToolRegistry:
     """Combines 5 sandboxed local tools with 9 tools discovered over stdio JSON-RPC 2.0 MCP."""
 
@@ -103,11 +116,15 @@ class StewardToolRegistry:
 
         self._local_specs: dict[str, ToolSchemaSpec] = {}
         self._local_handlers: dict[str, tuple[type[BaseModel], Callable[[Any], dict[str, Any]]]] = {}
-        self._session_voucher_handles: list[str] = []
-        self._session_activity_photos: list[Path] = []
-        self._session_activity_total: int = 0
-        self._session_photo_vlm_captions: dict[str, str] = {}
         self._register_local()
+
+    @staticmethod
+    def _current_bundle() -> _SessionBundleState:
+        b = _SESSION_BUNDLE_CTX.get()
+        if b is None:
+            b = _SessionBundleState()
+            _SESSION_BUNDLE_CTX.set(b)
+        return b
 
     def set_session_bundle(
         self,
@@ -116,10 +133,15 @@ class StewardToolRegistry:
         activity_photos: list[Path] | None = None,
         total_activity_photo_count: int = 0,
     ) -> None:
-        self._session_voucher_handles = list(voucher_handles)
-        self._session_activity_photos = list(activity_photos or [])
-        self._session_activity_total = total_activity_photo_count
-        self._session_photo_vlm_captions = {}
+        """Bind per-async-task isolated bundle state via ContextVar (zero cross-request leakage)."""
+        _SESSION_BUNDLE_CTX.set(
+            _SessionBundleState(
+                voucher_handles=list(voucher_handles),
+                activity_photos=list(activity_photos or []),
+                activity_total=total_activity_photo_count,
+                photo_vlm_captions={},
+            )
+        )
 
     def close(self) -> None:
         if self._owns_mcp:
@@ -362,8 +384,9 @@ class StewardToolRegistry:
                             pdf_doc.close()
 
             photo_prompt = "用一句简洁客观的中文（15-28字）描述这张活动现场照片的核心画面内容（例如授课主题PPT、课堂互动、全体合影等），不要臆造文字。"
+            bundle = self._current_bundle()
             activity_previews: list[dict[str, str]] = []
-            for p_idx, p_path in enumerate(self._session_activity_photos):
+            for p_idx, p_path in enumerate(bundle.activity_photos):
                 activity_previews.append({"index": str(p_idx + 1), "filename": p_path.name, "vlm_caption": ""})
                 if p_path.exists():
                     pil = ImageOps.exif_transpose(Image.open(p_path)).convert("RGB")
@@ -395,7 +418,7 @@ class StewardToolRegistry:
                         else:
                             clean_cap = vtxt.strip().replace("\n", " ")[:60]
                             activity_previews[idx]["vlm_caption"] = clean_cap
-                            self._session_photo_vlm_captions[self._session_activity_photos[idx].name] = clean_cap
+                            bundle.photo_vlm_captions[bundle.activity_photos[idx].name] = clean_cap
                 for idx, notes in pdf_page_notes.items():
                     receipts[idx]["vlm_pixel_verification"] = "\n".join(notes)
                 payload["receipts"] = receipts
@@ -469,9 +492,10 @@ class StewardToolRegistry:
                 )
 
         # Tamper-evident SHA-256 Evidence Seal binding input voucher digests + AST total
+        bundle = self._current_bundle()
         voucher_digests = sorted(
             art.sha256[:12]
-            for h in self._session_voucher_handles
+            for h in bundle.voucher_handles
             if (art := self.artifact_registry.get(h)) is not None
         )
         seal_payload = json.dumps(
@@ -482,17 +506,17 @@ class StewardToolRegistry:
 
         act_pairs: list[tuple[Path, str]] | None = None
         act_note = ""
-        if args.include_activity_photos and self._session_activity_photos:
+        if args.include_activity_photos and bundle.activity_photos:
             act_pairs = []
-            for idx, p_path in enumerate(self._session_activity_photos):
+            for idx, p_path in enumerate(bundle.activity_photos):
                 cap = (
                     args.activity_photo_captions[idx].strip()
                     if idx < len(args.activity_photo_captions) and args.activity_photo_captions[idx].strip()
-                    else self._session_photo_vlm_captions.get(p_path.name, f"活动现场照片（{p_path.name}）")
+                    else bundle.photo_vlm_captions.get(p_path.name, f"活动现场照片（{p_path.name}）")
                 )
                 act_pairs.append((p_path, f"照片 {idx + 1}｜{cap}"))
             act_note = (
-                f"以下精选 {len(act_pairs)} 张现场佐证照片（原始归档共含 {self._session_activity_total} 张活动照片可供备查）。"
+                f"以下精选 {len(act_pairs)} 张现场佐证照片（原始归档共含 {bundle.activity_total} 张活动照片可供备查）。"
             )
 
         res = build_reimbursement_docx(
@@ -505,7 +529,7 @@ class StewardToolRegistry:
             items=args.items,
             artifact_registry=self.artifact_registry,
             extra_warnings=eff_warnings,
-            include_all_registered_handles=self._session_voucher_handles,
+            include_all_registered_handles=bundle.voucher_handles,
             budget_cap_cny=args.budget_cap_cny,
             extra_sections=[s.model_dump() for s in args.extra_sections] if args.extra_sections else None,
             activity_photos=act_pairs,

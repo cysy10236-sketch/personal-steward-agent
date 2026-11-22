@@ -203,6 +203,7 @@ class StewardAgent:
             control_plane=self.control_plane,
             registry=self.tools,
             sandbox=self.sandbox,
+            audit_log_path=settings.trace_log_path.parent / "gateway_audit.jsonl",
         )
         self.ws_auditor = WorkspaceSnapshotAuditor(settings.sandbox_workspace_dir)
 
@@ -324,7 +325,7 @@ class StewardAgent:
                 args_eff = dict(tc.arguments)
                 if tc.tool_name == "mcp_reimburse_submit_payout" and resume_checkpoint_id:
                     args_eff["idempotency_key"] = resume_checkpoint_id
-                rec, v_in, v_out = await self.tools.execute_async(tc.tool_name, args_eff, llm=self.llm)
+                rec, v_in, v_out = await self.gateway.dispatch_approved(tc.tool_name, args_eff, llm=self.llm)
                 totals[0] += v_in
                 totals[1] += v_out
                 all_exec.append(rec)
@@ -484,14 +485,33 @@ class StewardAgent:
                 self._step_state(state_path, AgentState.EXECUTE)
                 for tc in executable_calls:
                     with self.tracer.span(trace_id, "tool", tc.tool_name) as sp:
-                        rec, v_in, v_out = await self.tools.execute_async(tc.tool_name, tc.arguments, llm=self.llm)
+                        rec, v_in, v_out = await self.gateway.dispatch_approved(tc.tool_name, tc.arguments, llm=self.llm)
                         sp.status_code = 200 if rec.status == "ok" else 422
                         sp.input_tokens, sp.output_tokens = v_in, v_out
                     totals[0] += v_in
                     totals[1] += v_out
-                    all_exec.append(rec)
                     if rec.tool_name == "export_reimbursement_docx" and rec.status == "ok":
                         docx_exported_ok = True
+                        # Automatic Maker-Checker cross-audit under strictly attenuated read-only delegation token
+                        with self.tracer.span(trace_id, "control_plane", "delegated_compliance_audit") as asp:
+                            claimed_amts = [float(it.get("reimbursable_cny", 0.0)) for it in tc.arguments.get("items", []) if isinstance(it, dict)]
+                            b_cap = tc.arguments.get("budget_cap_cny")
+                            audit_out = await self.run_delegated_compliance_audit(
+                                parent_token=root_token,
+                                claimed_items_cny=claimed_amts,
+                                budget_cap_cny=float(b_cap) if b_cap is not None else None,
+                                run_id=trace_id,
+                            )
+                            asp.metadata = audit_out
+                        out_obj = json.loads(rec.output_json)
+                        out_obj["delegated_compliance_audit"] = audit_out
+                        rec = ToolExecutionRecord(
+                            tool_name=rec.tool_name,
+                            arguments=rec.arguments,
+                            status=rec.status,
+                            output_json=json.dumps(out_obj, ensure_ascii=False),
+                        )
+                    all_exec.append(rec)
                     if rec.tool_name == "inspect_all_receipts" and '"tainted": true' in rec.output_json.lower():
                         is_tainted = True
                     limit_chars = max(16000, self.settings.tool_output_max_chars * 6) if tc.tool_name == "inspect_all_receipts" else self.settings.tool_output_max_chars

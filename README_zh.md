@@ -1,8 +1,8 @@
-# TripLedger Steward (`personal-steward-agent` v2.3)
+# TripLedger Steward (`personal-steward-agent` v2.4)
 
 **[English](README.md)** | **简体中文**
 
-**生产级个人差旅管理、全自主压缩包 Word（`.docx`）报销工坊与确定性财务审计智能体（Personal Agent Harness）**
+**生产级个人 Agent 参考架构：Control Plane / Gateway 委托降权安全治理、评测 Release Gate 持续进化闭环与全自主压缩包 Word（`.docx`）报销工坊**
 
 ![TripLedger Steward Minimalist Web Studio](reports/web_studio_demo.png)
 
@@ -40,6 +40,8 @@ flowchart TD
 | **混合个人记忆与通用实体拒答引擎** | `src/memory/steward_memory.py`<br>`src/memory/tokenizer_embedder.py` | SQLite WAL + `FTS5` BM25 + 256 维双语向量 + 纯 NumPy 幂迭代有向 PPR（$\alpha=0.85$，含悬挂节点质量守恒及无图种子权重重归一）+ 水位线单值槽位覆盖 + 零硬编码城市/品牌名的通用实体覆盖拒答门控。 |
 | **Fail-Closed 隐私保险库 + 拟合逻辑斯蒂路由** | `src/router/steward_router.py` | 未配置 `LOCAL_SLM_BASE_URL` 时绝不 Fail-Open 外发云端：`PrivacyVault` 在本地完成 GB 11643 身份证与 Luhn 银行卡校验并剥离明文 PII 为 `<PII_*>` 占位符；6 维路由权重经 NumPy 梯度下降拟合（留出验证集准确率 **95.8%**，Brier **0.0247**，ECE **0.1028**）；`pair_group` 成对裁剪（14→6）+ 字节恒定 Prefix KV-Cache。 |
 | **多票据 Word（`.docx`）排版 + 极简 Web 工坊** | `src/perception/docx_exporter.py`<br>`src/web/index.html`<br>`main.py` | 批量并行识图 `inspect_all_receipts`（ONNX `RapidOCR` + `deepseek-flash` 原生视觉）+ 同日同额重复票据检测 + AST 核验后生成 A4 规范 `.docx`（汇总表 + 预警框 + EXIF 校正自适应缩放票据照片附件）；零构建依赖的 Apple/Google 极简风本地前端（`http://127.0.0.1:8088`），支持拖拽多图上传、一键加载带队示例票据与在线 HITL 断点续跑。 |
+| **Control Plane / Gateway 与委托降权授权** | `src/control_plane/gateway.py`<br>`src/agent/tools.py` | 严格解耦 **Agent 定义（`AgentManifest`）**、**控制面（`AgentControlPlane`）**、**元数据注册表（`schema_fingerprint`）**与**数据面网关（`ToolExecutionGateway`）**；签发 HMAC-SHA256 `DelegatedCapabilityToken`，代码层强制执行防提权数学不变量（子令牌作用域/金额上限/TTL 必须严格收敛于父令牌与 Manifest），为只读 Maker-Checker 合规审计子 Agent 提供物理级防越权隔离与不可变 `GatewayAuditEvent` 审计日志。 |
+| **评测平台底座、Release Gate 与 Bad Case 飞轮** | `src/eval/eval_platform.py`<br>`datasets/bad_case_regression.jsonl` | 彻底解耦平台评测底座（绑定 `git_sha`/`prompt`/`router`/`tool_schema`/模型配置的不可变 `RunVersion`、SQLite `ExperimentStore`、按安全底线/成功率/P95 延迟/单样例零回退自动输出 `PASS`/`BLOCK` 的 CI `ReleaseGate`、内置 Fail-Closed PII 脱敏的 `BadCaseFlywheel`）与可插拔业务评估器（`FinancialNumericEvaluator` / `SecurityBoundaryEvaluator`）。 |
 | **Checkpoint 断点续跑 + 加固沙箱** | `src/agent/state_machine.py`<br>`src/agent/sandbox.py`<br>`src/agent/tools.py` | 13 态强契约 FSM；16 个注册工具（7 本地 + 9 `stdio` MCP）；SQLite `CheckpointStore` 支持 `HALTED_APPROVAL -> resume(checkpoint_id, approval_token)` 真实人工批准续跑与 HMAC-SHA256 参数指纹防篡改；零 `eval()` 的 `ASTExpenseCalculator`；`shell=False` 只读命令白名单；重复调用熔断与长输出首尾压缩。 |
 
 ---
@@ -113,6 +115,9 @@ Copy-Item .env.example .env
 # 3. 重跑 N_mem=24 + N_router=24 + N_e2e=16 全量基准并生成报告与 200 DPI 三联消融图
 .\.venv\Scripts\python -m src.eval.run_benchmark
 
-# 4. 启动极简风 Web 报销工坊与 FastAPI 服务 -> 浏览器访问 http://127.0.0.1:8088
+# 4. 导入基线至 SQLite ExperimentStore、自动脱敏回流 Bad Cases 并执行 CI ReleaseGate
+.\.venv\Scripts\python -m src.eval.eval_platform --import-report reports/benchmark_metrics.json --baseline --harvest-bad-cases datasets/bad_case_regression.jsonl
+
+# 5. 启动极简风 Web 报销工坊与 FastAPI 服务 -> 浏览器访问 http://127.0.0.1:8088
 .\.venv\Scripts\python main.py --serve --port 8088
 ```

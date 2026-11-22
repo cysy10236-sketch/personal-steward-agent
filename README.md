@@ -1,8 +1,8 @@
-# TripLedger Steward (`personal-steward-agent` v2.3)
+# TripLedger Steward (`personal-steward-agent` v2.4)
 
 **English** | **[简体中文](README_zh.md)**
 
-**Production-Hardened Personal Travel, Autonomous `.rar`/`.zip` -> Word (`.docx`) Reimbursement Studio & Deterministic Financial Audit Agent**
+**Production-Hardened Personal Agent Reference Architecture: Control Plane / Gateway, Attenuated Delegation, Evaluation Release Gate & Autonomous `.rar`/`.zip` -> Word (`.docx`) Reimbursement Studio**
 
 ![TripLedger Steward Minimalist Web Studio](reports/web_studio_demo.png)
 
@@ -40,6 +40,8 @@ flowchart TD
 | **Hybrid Personal Memory Engine** | `src/memory/steward_memory.py`<br>`src/memory/tokenizer_embedder.py` | SQLite WAL + `FTS5` BM25 + 256-D bilingual embeddings + pure-NumPy power-iteration Directed PPR ($\alpha=0.85$, dangling-node mass conservation) + Watermark Slot Supersession + domain-agnostic Entity-Coverage Abstention Gate (zero hardcoded cities/brands). |
 | **Fail-Closed PII Vault & Fitted Router** | `src/router/steward_router.py` | Locally computes GB 11643 ID & Luhn card checksums and strips raw PII (`<PII_CN_ID_1>`) before cloud calls when no `LOCAL_SLM_BASE_URL` is set; 6-D logistic weights fitted via NumPy gradient descent (`Held-Out Acc=95.8%`, `Brier=0.0247`, `ECE=0.1028`); paired MCP pruning (`14 -> 6`); byte-constant Prefix KV-Cache. |
 | **Batch Word (`.docx`) Export & Web Studio** | `src/perception/docx_exporter.py`<br>`src/web/index.html`<br>`main.py` | Parallel `inspect_all_receipts` (ONNX `RapidOCR` + `deepseek-flash` VLM), same-day/same-amount duplicate claim detection, AST-verified `.docx` summary table + EXIF-corrected embedded receipt photos, and a zero-dependency Apple/Google minimalist Web UI (`http://127.0.0.1:8088`) with 1-click sample pack and inline HITL Checkpoint resume. |
+| **Control Plane, Gateway & Attenuated Delegation** | `src/control_plane/gateway.py`<br>`src/agent/tools.py` | Strict separation of **Agent Definition (`AgentManifest`)**, **Control Plane (`AgentControlPlane`)**, **Metadata Registry (`schema_fingerprint`)**, and **Data Plane Gateway (`ToolExecutionGateway`)**. Issues HMAC-SHA256 `DelegatedCapabilityToken` enforcing fail-closed attenuation (`child_scopes ⊆ parent_scopes`, `budget <= parent`, `ttl <= parent`) for read-only Maker-Checker compliance auditing, with immutable `GatewayAuditEvent` logs. |
+| **Evaluation Platform, Release Gate & Bad Case Flywheel** | `src/eval/eval_platform.py`<br>`datasets/bad_case_regression.jsonl` | Decouples domain-agnostic eval infrastructure (`RunVersion` across git/prompt/router/tool-schema/models, SQLite `ExperimentStore`, CI `ReleaseGate` returning `PASS`/`BLOCK`, PII-redacted `BadCaseFlywheel`) from pluggable business evaluators (`FinancialNumericEvaluator`, `SecurityBoundaryEvaluator`). |
 | **FSM, Checkpoint Resume & Hardened Sandbox** | `src/agent/state_machine.py`<br>`src/agent/sandbox.py`<br>`src/agent/tools.py` | 13-state `ALLOWED_TRANSITIONS` FSM; 16 registered tools (7 local + 9 `stdio` MCP); SQLite `CheckpointStore` enabling true `HALTED_APPROVAL -> resume(checkpoint_id, approval_token)` with HMAC-SHA256 parameter binding; `ASTExpenseCalculator` (no `eval()`); `shell=False` allowlisted diagnostics; duplicate-call loop breaker & output compaction. |
 
 ---
@@ -103,6 +105,9 @@ Copy-Item .env.example .env
 # 3. Full N_mem=24 + N_router=24 + N_e2e=16 benchmark & 200-DPI ablation chart
 .\.venv\Scripts\python -m src.eval.run_benchmark
 
-# 4. Launch Minimalist Web Studio & FastAPI server -> open http://127.0.0.1:8088
+# 4. Import benchmark into SQLite ExperimentStore, harvest Bad Cases & run CI ReleaseGate
+.\.venv\Scripts\python -m src.eval.eval_platform --import-report reports/benchmark_metrics.json --baseline --harvest-bad-cases datasets/bad_case_regression.jsonl
+
+# 5. Launch Minimalist Web Studio & FastAPI server -> open http://127.0.0.1:8088
 .\.venv\Scripts\python main.py --serve --port 8088
 ```

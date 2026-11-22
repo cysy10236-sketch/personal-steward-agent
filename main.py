@@ -256,6 +256,8 @@ def create_app(*, force_mock: bool = False) -> FastAPI:
             "vlm_model": agent.settings.vlm_model,
             "registered_tools": len(agent.tools.all_specs()),
             "mcp_discovered_tools": len(agent.tools.mcp_client.tool_specs),
+            "tool_schema_sha256": agent.tools.schema_fingerprint(),
+            "control_plane_agents": sorted(agent.control_plane._manifests.keys()),
         }
 
     @app.get("/v1/steward/sample-pack")

@@ -228,6 +228,14 @@ class StewardToolRegistry:
     def all_specs(self) -> list[ToolSchemaSpec]:
         return list(self._local_specs.values()) + self.mcp_client.tool_specs
 
+    def schema_fingerprint(self) -> str:
+        """Deterministic SHA-256 version fingerprint over all registered local + MCP tool schemas."""
+        canonical = [
+            {"name": s.name, "namespace": s.namespace, "parameters": s.parameters}
+            for s in sorted(self.all_specs(), key=lambda x: x.name)
+        ]
+        return hashlib.sha256(json.dumps(canonical, sort_keys=True, ensure_ascii=False).encode("utf-8")).hexdigest()[:16]
+
     def specs_by_names(self, names: list[str]) -> list[ToolSchemaSpec]:
         by_name = {s.name: s for s in self.all_specs()}
         return [by_name[n] for n in names if n in by_name]

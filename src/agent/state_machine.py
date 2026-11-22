@@ -17,6 +17,7 @@ from PIL import Image
 from pydantic import BaseModel, Field
 
 from ..config import StewardSettings
+from ..control_plane.gateway import AgentControlPlane, DelegatedCapabilityToken, ToolExecutionGateway
 from ..llm.provider import LLMProviderProtocol, MockLLMProvider, ToolCallRequest
 from ..memory.steward_memory import MemorySearchResult, StewardMemoryEngine
 from ..observability.tracer import StructuredTracer, new_trace_id
@@ -197,7 +198,46 @@ class StewardAgent:
             auto_reimburse_limit_cny=settings.auto_reimburse_limit_cny,
             approval_hmac_secret=settings.approval_hmac_secret,
         )
+        self.control_plane = AgentControlPlane(signing_secret=settings.approval_hmac_secret)
+        self.gateway = ToolExecutionGateway(
+            control_plane=self.control_plane,
+            registry=self.tools,
+            sandbox=self.sandbox,
+        )
         self.ws_auditor = WorkspaceSnapshotAuditor(settings.sandbox_workspace_dir)
+
+    async def run_delegated_compliance_audit(
+        self,
+        *,
+        parent_token: DelegatedCapabilityToken,
+        claimed_items_cny: list[float],
+        budget_cap_cny: float | None = None,
+        run_id: str = "audit",
+    ) -> dict[str, Any]:
+        """Maker-Checker read-only sub-agent operating strictly under an attenuated delegation token."""
+        auditor_tok = self.control_plane.delegate_token(
+            parent_token,
+            target_agent_id="steward.compliance_auditor",
+            requested_namespaces=["core"],
+            max_amount_cny=0.0,
+            ttl_seconds=30.0,
+        )
+        expr = " + ".join(str(x) for x in claimed_items_cny) if claimed_items_cny else "0"
+        dec, rec, _, _ = await self.gateway.execute_authorized(
+            auditor_tok, "eval_expense_math", {"expression": expr}, run_id=f"{run_id}_auditor"
+        )
+        if dec.verdict != SandboxVerdict.ALLOW or rec is None or rec.status != "ok":
+            return {"verdict": "REJECT", "reason": dec.reason}
+        verified_net = float(json.loads(rec.output_json)["result"])
+        budget_ok = True if budget_cap_cny is None else (verified_net <= budget_cap_cny + 1e-6)
+        return {
+            "verdict": "PASS" if budget_ok else "WARN_OVER_BUDGET",
+            "verified_net_cny": verified_net,
+            "budget_cap_cny": budget_cap_cny,
+            "auditor_agent_id": auditor_tok.actor_agent_id,
+            "delegated_by": auditor_tok.delegated_by,
+            "auditor_scopes": auditor_tok.allowed_namespaces,
+        }
 
     async def close(self) -> None:
         await self.memory.flush_and_close()
@@ -244,13 +284,16 @@ class StewardAgent:
     ) -> tuple[str | None, AgentRunResult | None]:
         """Shared PLAN <-> SANDBOX_CHECK <-> EXECUTE loop used by both run() and resume()."""
         recent_sigs: list[str] = []
+        root_token = self.control_plane.issue_root_token("steward.primary", principal_id=session_id)
 
         # If resuming from a halted checkpoint, run the pending approved call(s) first!
         if pre_approved_calls:
             self._step_state(state_path, AgentState.SANDBOX_CHECK)
             exec_now: list[ToolCallRequest] = []
             for tc in pre_approved_calls:
-                sbx = self.sandbox.check(tc.tool_name, tc.arguments, is_tainted_context=is_tainted, approval_token=approval_token)
+                sbx = self.gateway.authorize(
+                    root_token, tc.tool_name, tc.arguments, is_tainted_context=is_tainted, approval_token=approval_token, run_id=trace_id
+                )
                 all_sbx.append(sbx)
                 if sbx.verdict != SandboxVerdict.ALLOW:
                     self._step_state(state_path, AgentState.BLOCKED_SECURITY)
@@ -347,7 +390,9 @@ class StewardAgent:
             self._step_state(state_path, AgentState.SANDBOX_CHECK)
             executable_calls: list[ToolCallRequest] = []
             for tc in comp.tool_calls:
-                sbx = self.sandbox.check(tc.tool_name, tc.arguments, is_tainted_context=is_tainted, approval_token=approval_token)
+                sbx = self.gateway.authorize(
+                    root_token, tc.tool_name, tc.arguments, is_tainted_context=is_tainted, approval_token=approval_token, run_id=trace_id
+                )
                 all_sbx.append(sbx)
 
                 if sbx.verdict == SandboxVerdict.REQUIRE_APPROVAL:
